@@ -1,0 +1,10 @@
+name "stacky"
+description "Stacky, a stacked base programming language"
+authors "Rémy Mouëza"
+copyright "Copyright © 2016, Rémy Mouëza"
+license "MIT"
+dependency "pegged" version="~>0.3.2"
+targetName "stacky"
+targetType "executable"
+-- buildOptions "debugMode" "debugInfo" "alwaysStackFrame"
+
