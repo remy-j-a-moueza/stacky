@@ -5,6 +5,8 @@ import std.string;
 import std.algorithm;
 import std.array;
 import std.digest.sha;
+import std.range;
+import std.math;
 
 import pegged.grammar;
 import pegged.tester.grammartester;
@@ -124,11 +126,11 @@ struct Procedure {
     string toString () {
         switch (kind) {
             case Words:
-                return "<proc: code %s>".format (code.to!string);
+                return "{proc: code %s}".format (code.to!string);
             case Native:
-                return "<proc: native %x>".format (&native);
+                return "{proc: native %x}".format (&native);
             default:
-                return "<proc: empty>";
+                return "{proc: empty}";
         }
     }
     
@@ -231,6 +233,29 @@ struct Cell {
            This fixes a segfault when using Cell [Cell].
          */
         Cell [][string] dict;
+    }
+
+    string kindStr () { 
+        switch (kind) {
+        case Integer: 
+            return "Integer";
+        case Floating:
+            return "Floating";
+        case String: 
+            return "String";
+        case Symbol:
+            return "Symbol";
+        case Bool:
+            return "Bool";
+        case Array:
+            return "Array";
+        case Dict:
+            return "Dict";
+        case Proc:
+            return "Proc";
+        default:
+            return "unknown";
+        }
     }
 
     /// Initialization from a long value.
@@ -628,6 +653,8 @@ struct Cell {
         return toString.sha1Of.toHexString.dup ;
     }
 
+    
+    /// Search a key in a dictionary.
     Cell * lookup (Cell symbol) {
         if (kind != Dict) {
             throw new InvalidCellKind ("lookup: we are not a Dict");
@@ -645,6 +672,60 @@ struct Cell {
 
         return &(*match) [1];
     }
+
+    /// Assign at an index for arrays and dictionaries.
+    Cell opIndexAssign (Cell value, Cell symbol) {
+        if (kind == Array) {
+            if (symbol.kind != Integer) {
+                throw new InvalidCellKind (
+                    "array index assign: need an integer index.");
+            }
+
+            array [symbol.integer] = value;
+            return value;
+        }
+
+        else if (kind == Dict) {
+            dict [symbol.sha1Hash] = [symbol, value];
+            return value;
+        }
+
+        throw new InvalidCellKind (
+            "Expected an Array or a Dict.");
+    }
+
+    /// Retrieve value at an index for arrays and dictinaries.
+    Cell opIndex (Cell key) {
+        if (kind == Array) {
+            if (key.kind != Integer) {
+                throw new InvalidCellKind (
+                    "array index assign: need an integer index.");
+            }
+
+            return array [key.integer];
+        }
+
+        else if (kind == Dict) {
+            return dict [key.sha1Hash][1];
+        }
+        
+        throw new InvalidCellKind (
+            "Expected an Array or a Dict.");
+    }
+    
+    /// Convert to floating as needed.
+    double floatValue () {
+        if (kind != Integer || kind != Floating) {
+            throw new InvalidCellKind ("asFloating: Not a Number.");
+        }
+
+        if (kind == Integer) {
+            return integer.to!double;
+        }
+
+        return this.floating;
+    }
+
 }
 
 void cellTest () {
@@ -746,13 +827,178 @@ Cell index (Cell [] stack, size_t n) {
     return stack [$ -1 -n];
 }
 
+/// An Input Range over cells.
+class CellRange {
+    size_t cursor = 0;
+    Cell [] cells;
+
+    this (Cell [] array) {
+        this.cells = array;
+    }
+
+    bool empty () {
+        return cursor == length;
+    }
+
+    size_t length () {
+        return cells.length;
+    }
+
+    Cell front () {
+        if (length <= cursor) {
+            throw new Exception ("CellRange front: no more cells.");
+        }
+        return cells [cursor];
+    }
+
+    void popFront () {
+        ++ cursor;
+    }
+
+}
+
+/// An Input Range over a stack of arrays of cells.
+class ExecutionStack {
+    size_t cursor = 0;
+    CellRange [] stack;
+
+    this () {
+        cursor = 0;
+        stack  = [];
+    }
+
+    bool empty () {
+        if (stack is null) {
+            return true;
+        }
+
+        if (stack.empty) {
+            return true;
+        }
+
+        if (stack.length == 1 && stack.back.empty) {
+            stack.popBack ();
+            return true;
+        }
+        return false;
+    }
+
+    Cell front () {
+        return stack.back.front;
+    }
+
+    void popFront () {
+        if (stack.empty) {
+            return;
+        }
+        if (stack.back.empty) {
+            stack.popBack ();
+            return;
+        }
+        stack.back.popFront;
+    }
+
+    ExecutionStack add (Cell [] array) {
+        this.stack ~= new CellRange (array);
+        return this;
+    }
+
+}
+
+
+/// A template for math binary operations.
+void numberOp (void delegate (long, long) integerOp, 
+               void delegate (double, double) floatingOp) (Stacky stacky) 
+{
+    if (stacky.operands.length < 2) {
+        throw new StackUnderflow ("numberOp: not enough arguments.");
+    }
+    Cell b = stacky.index (1); 
+    Cell a = stacky.index (2);
+    
+    string [] msgs = [];
+    
+    foreach (i, arg; [a, b]) {
+        if (arg.kind != Cell.Integer
+        &&  arg.kind != Cell.Floating) {
+            msgs ~= "numberOp: argument [%d] is not a number (%s): %s."
+                    .format (i, arg.kindStr, arg);
+        }
+    }
+
+
+    if (! msgs.empty) {
+        throw new InvalidCellKind (msgs.join (" "));
+    }
+    
+    stacky.pop ();
+    stacky.pop ();
+    
+    if (a.kind == Cell.Floating || b.kind == Cell.Floating) {
+        floatingOp (a.floatValue, b.floatValue);
+
+    } else { 
+        integerOp (a.integer, b.integer);
+    }
+}
+
+void numberFun (void delegate (long) integerOp, 
+                void delegate (double) floatingOp) (Stacky stacky) 
+{
+    if (stacky.operands.length < 1) {
+        throw new StackUnderflow ("numberFun: not enough arguments.");
+    }
+    Cell num = stacky.index (1); 
+    
+    string [] msgs = [];
+    
+    if (num.kind != Cell.Integer
+    &&  num.kind != Cell.Floating) {
+        msgs ~= "numberFun: argument is not a number (%s): %s."
+                .format (num.kindStr, num);
+    }
+
+    if (! msgs.empty) {
+        throw new InvalidCellKind (msgs.join (" "));
+    }
+
+    stacky.pop ();
+    
+    if (num.kind == Cell.Floating) {
+        floatingOp (num.floating);
+
+    } else { 
+        integerOp (num.integer);
+    }
+}
+
+
+/// A template for math binary operations.
+void numBinaryOp (alias binOp) (Stacky stacky) {
+    numberOp!(
+        (long a, long b) {
+            Cell result = {
+                kind: Cell.Integer,
+                integer: binOp (a, b)
+            };
+            stacky.push (result);
+        }, 
+        (double a, double b) {
+            Cell result = {
+                kind: Cell.Floating,
+                floating: binOp (a, b)
+            };
+            stacky.push (result);
+        }) (stacky);
+}
+
 class Stacky {
     
     /// Operand stack. The top is the end of the array.
     Cell [] operands;
     
     /// Execution stack: tokens to be interpreted.
-    Cell [][] execution;
+    ExecutionStack execution;
     
     /// Dictionary stack.
     Cell [] dicts;
@@ -760,9 +1006,6 @@ class Stacky {
     /// Instruction pointer.
     size_t ip = 0;
     
-    /// Execution (tokens) pointer.
-    size_t ep = 0;
-
     Cell top () {
         return operands [0.. ip].top; 
     }
@@ -783,8 +1026,34 @@ class Stacky {
         "push (%s), ip == %d".writefln (cell, ip);
     }
 
+
+    void pop () {
+        "pop: before: ip (%d), %s".writefln (ip, operands);
+        
+        if (operands.length < 1) {
+            throw new StackUnderflow ("pop");
+        }
+        
+        if (operands.length == ip) {
+            operands.length -= 1;
+
+        } else { 
+            operands 
+                =  operands [0     .. ip]
+                ~  operands [ip +1 .. $];
+        }
+        "pop: after %s".writefln (operands);
+        -- ip;
+    };
+
     this () {
         dicts ~= builtinWords ();
+        Cell userDict = {
+            kind: Cell.Dict, 
+            dict: null
+        };
+        dicts ~= userDict;
+        execution = new ExecutionStack;
     }
 
 
@@ -792,28 +1061,24 @@ class Stacky {
         Procedure.NativeType [string] procs;
         
         /// Discard all elements on the stack.
-        procs ["clear"] = (Stacky stacky) {
-            stacky.operands = stacky.operands [0 .. stacky.ip];
+        procs ["clear-stack"] = (Stacky stacky) {
+            if (stacky.operands.length == stacky.ip) {
+                stacky.operands = [];
+                stacky.ip = 0;
+            }
+            if (stacky.operands.length < stacky.ip) {
+                stacky.operands = stacky.operands [stacky.ip .. $];
+            }
+        };
+
+        /// Puts the stack length on top of the stack.
+        procs ["stack-length"] = (Stacky stacky) {
+            stacky.push (Cell.from (stacky.ip));
         };
         
         /// Removes one element at the top of the stack.
         procs ["pop"] = (Stacky stacky) {
-            "pop: before: ip (%d), %s".writefln (stacky.ip, stacky.operands);
-            
-            if (stacky.operands.length < 1) {
-                throw new StackUnderflow ("pop");
-            }
-            stacky.operands.length -= 1; 
-            //if (stacky.operands.length == stacky.ip) {
-            //    stacky.operands.length -= 1;
-
-            //} else { 
-            //    stacky.operands 
-            //        =  stacky.operands [0     .. stacky.ip]
-            //        ~  stacky.operands [stacky.ip +1 .. $];
-            //}
-            "pop: after %s".writefln (stacky.operands);
-            -- stacky.ip;
+            stacky.pop ();
         };
 
         procs ["drop"] = procs ["pop"];
@@ -841,9 +1106,9 @@ class Stacky {
                 throw new StackUnderflow ("swap");
             }
             Cell top    = stacky.top;
-            procs ["pop"] (stacky);
+            stacky.pop ();
             Cell bottom = stacky.top;
-            procs ["pop"] (stacky);
+            stacky.pop ();
 
             stacky.push (top);
             stacky.push (bottom);
@@ -866,7 +1131,7 @@ class Stacky {
             }
 
             Cell n = stacky.operands.top;
-            procs ["pop"] (stacky);
+            stacky.pop ();
             
             if (n.kind != Cell.Integer) {
                 throw new InvalidCellKind (
@@ -893,7 +1158,7 @@ class Stacky {
             }
 
             Cell n = stacky.operands.top;
-            procs ["pop"] (stacky);
+            stacky.pop ();
             
             if (n.kind != Cell.Integer) {
                 throw new InvalidCellKind (
@@ -959,6 +1224,7 @@ class Stacky {
             stacky.ip -= index +1;
         };
 
+        /// Prints the stack on stdout.
         procs ["print-stack"] = (Stacky stacky) {
             //"print-stack: to ip : %s".writefln (stacky.operands [0 ..ip]);
             "print-stack: all   : %s".writefln (stacky.operands);
@@ -971,10 +1237,12 @@ class Stacky {
             vals.join (" ").writeln;
         };
 
+        /// Leave an Array opening mark.
         procs ["("] = (Stacky stacky) {
             stacky.push (Cell.from!"symbol" ("("));
         };
 
+        /// Create an array on the stack.
         procs [")"] = (Stacky stacky) {
             Cell tokens = {
                 kind: Cell.Array,
@@ -999,18 +1267,20 @@ class Stacky {
             tokens.array = stacky.operands [stacky.ip - index .. stacky.ip];
 
             foreach (num; stacky.ip - index .. stacky.ip) {
-                procs ["pop"] (stacky);
+                stacky.pop ();
             }
             // Remove the openning '('.
-            procs ["pop"] (stacky);
+            stacky.pop ();
 
             stacky.push (tokens);
         };
         
+        /// Leave a dictionary opening mark.
         procs ["["] = (Stacky stacky) {
             stacky.push (Cell.from!"symbol" ("["));
         };
 
+        /// Create a dictionary on the stack.
         procs ["]"] = (Stacky stacky) {
             size_t index = 0; 
             bool found   = false;
@@ -1035,10 +1305,10 @@ class Stacky {
             }
 
             foreach (num; stacky.ip - index .. stacky.ip) {
-                procs ["pop"] (stacky);
+                stacky.pop ();
             }
             // Remove the openning '['.
-            procs ["pop"] (stacky);
+            stacky.pop ();
             
             Cell dict = {
                 kind: Cell.Dict,
@@ -1054,37 +1324,245 @@ class Stacky {
             stacky.push (dict);
         };
         
+        /// Creates a procedure.
         procs ["{"] = (Stacky stacky) {
-            stacky.push (Cell.from!"symbol" ("{"));
-        };
-        
-        procs ["}"] = (Stacky stacky) {
-            size_t index = 0; 
-            bool found   = false;
+            Cell [] code;
+            bool balanced = false;
+            
+            stacky.execution.popFront;
 
-            foreach_reverse (cell; stacky.operands [0 .. stacky.ip]) {
-                if (cell.kind == Cell.Symbol
-                &&  cell.symbol == "{") {
-                    found = true;
+            foreach (token; stacky.execution) {
+                if (token.kind   == Cell.Symbol
+                &&  token.symbol == "}") 
+                {
+                    balanced = true;
                     break;
                 }
-                index ++;
-            }
-            if (! found) {
-                throw new Exception ("Unbalanced proc '{}' parenthesis");
+
+                code ~= token;
             }
 
-            Cell [] tokens = stacky.operands [stacky.ip - index .. stacky.ip];
-
-            foreach (num; stacky.ip - index .. stacky.ip) {
-                procs ["pop"] (stacky);
-            }
-            // Remove the openning '{'.
-            procs ["pop"] (stacky);
-
-            stacky.push (Cell.procFromCode (tokens));
+            stacky.push (Cell.procFromCode (code));
         };
 
+        /// Define a symbol in the top dictionary.
+        procs ["def"] = (Stacky stacky) {
+            if (stacky.operands.length < 2) {
+                throw new StackUnderflow ("def: not enough arguments.");
+            }
+            Cell obj   = stacky.top;
+            Cell name  = stacky.index (2);
+            
+            string msg = "";
+            
+            if (name.kind != Cell.Symbol) {
+                throw new InvalidCellKind (
+                    "Invalid 1st argument %s, typed %s: not a symbol."
+                    .format (name, name.kindStr));
+            }
+            stacky.pop ();
+            stacky.pop ();
+
+            stacky.dicts.top [name] = obj;
+        };
+
+        
+        procs ["+"] = (Stacky stacky) {
+            numBinaryOp!((a, b) => a + b) (stacky);
+        };
+        
+        procs ["-"] = (Stacky stacky) {
+            numBinaryOp!((a, b) => a - b) (stacky);
+        };
+        
+        procs ["*"] = (Stacky stacky) {
+            numBinaryOp!((a, b) => a * b) (stacky);
+        };
+        
+        procs ["/"] = (Stacky stacky) {
+            numBinaryOp!((a, b) => a / b) (stacky);
+        };
+        
+        procs ["mod"] = (Stacky stacky) {
+            numBinaryOp!((a, b) => a % b) (stacky);
+        };
+
+        procs ["divmod"] = (Stacky stacky) {
+            numberOp!(
+                (long a, long b) {
+                    stacky.push (Cell.from (a / b));
+                    stacky.push (Cell.from (a % b));
+                }, 
+                (double a, double b) {
+                    stacky.push (Cell.from (a/ b));
+                    stacky.push (Cell.from (fmod (a, b).to!double));
+
+                }) (stacky);
+        };
+
+        procs ["neg"] = (Stacky stacky) {
+            if (stacky.operands.length < 1) {
+                throw new StackUnderflow ("neg: not enough arguments.");
+            }
+            Cell num = stacky.index (1); 
+
+            if (num.kind == Cell.Integer) {
+                stacky.pop ();
+                stacky.push (Cell.from (- num.integer));
+
+            } else if (num.kind == Cell.Floating) {
+                stacky.pop ();
+                stacky.push (Cell.from (- num.floating));
+
+            } else {
+                throw new InvalidCellKind (
+                    "Not a number (%s): %s"
+                    .format (num.kindStr, num));
+            }
+        };
+
+        procs ["abs"] = (Stacky stacky) {
+            numberFun!(
+                (long num) {
+                    stacky.pop ();
+                    stacky.push (Cell.from (abs (num).to!long));
+                }, 
+                (double num) {
+                    stacky.pop ();
+                    stacky.push (Cell.from (abs (num).to!double));
+                }) (stacky);
+        };
+        
+        procs ["ceil"] = (Stacky stacky) {
+            numberFun!(
+                delegate void (long num) {}, 
+                (double num) {
+                    stacky.pop ();
+                    stacky.push (Cell.from (ceil (num).to!double));
+                }) (stacky);
+        };
+        
+        procs ["floor"] = (Stacky stacky) {
+            numberFun!(
+                delegate void (long num) {}, 
+                (double num) {
+                    stacky.pop ();
+                    stacky.push (Cell.from (floor (num).to!double));
+                }) (stacky);
+        };
+
+        procs ["round"] = (Stacky stacky) {
+            numberFun!(
+                delegate void (long num) {}, 
+                (double num) {
+                    stacky.pop ();
+                    stacky.push (Cell.from (round (num).to!double));
+                }) (stacky);
+        };
+        
+        procs ["sqrt"] = (Stacky stacky) {
+            numberFun!(
+                (long num) {
+                    stacky.push (
+                        Cell.from (sqrt (num.to!double).round.to!long));
+                }, 
+                (double num) {
+                    stacky.push (Cell.from (sqrt (num)));
+
+                }) (stacky);
+        };
+
+        procs ["to-int"] = (Stacky stacky) {
+            numberFun!(
+                delegate void (long num) {}, 
+                (double num) {
+                    stacky.push (Cell.from (round (num).to!long));
+                }) (stacky);
+        };
+
+        procs ["exp"] = (Stacky stacky) {
+            numberFun!(
+                (long num) {
+                    stacky.push (
+                        Cell.from (round (exp (num.to!double).to!long)));
+                },
+                (double num) {
+                    stacky.push (Cell.from (exp (num)));
+
+                }) (stacky);
+        };
+        
+        procs ["log"] = (Stacky stacky) {
+            numberFun!(
+                (long num) {
+                    stacky.push (
+                        Cell.from (round (log (num.to!double).to!long)));
+                },
+                (double num) {
+                    stacky.push (Cell.from (log (num)));
+
+                }) (stacky);
+        };
+        
+        procs ["log10"] = (Stacky stacky) {
+            numberFun!(
+                (long num) {
+                    stacky.push (
+                        Cell.from (round (log10 (num.to!double).to!long)));
+                },
+                (double num) {
+                    stacky.push (Cell.from (log10 (num)));
+
+                }) (stacky);
+        };
+        
+        procs ["sin"] = (Stacky stacky) {
+            numberFun!(
+                (long num) {
+                    stacky.push (
+                        Cell.from (round (sin (num.to!double).to!long)));
+                },
+                (double num) {
+                    stacky.push (Cell.from (sin (num)));
+
+                }) (stacky);
+        };
+        
+        procs ["cos"] = (Stacky stacky) {
+            numberFun!(
+                (long num) {
+                    stacky.push (
+                        Cell.from (round (cos (num.to!double).to!long)));
+                },
+                (double num) {
+                    stacky.push (Cell.from (cos (num)));
+
+                }) (stacky);
+        };
+        
+        procs ["cos"] = (Stacky stacky) {
+            numberFun!(
+                (long num) {
+                    stacky.push (
+                        Cell.from (round (cos (num.to!double).to!long)));
+                },
+                (double num) {
+                    stacky.push (Cell.from (cos (num)));
+
+                }) (stacky);
+        };
+        
+        procs ["atan"] = (Stacky stacky) {
+            numberFun!(
+                (long num) {
+                    stacky.push (
+                        Cell.from (round (atan (num.to!double).to!long)));
+                },
+                (double num) {
+                    stacky.push (Cell.from (atan (num)));
+
+                }) (stacky);
+        };
 
         return Cell.from!("symbol", string, Procedure.NativeType) (procs);
     }
@@ -1092,7 +1570,7 @@ class Stacky {
     Cell * lookup (Cell symbol) {
         Cell * match;
 
-        foreach (dict; dicts) {
+        foreach_reverse (dict; dicts) {
             match = dict.lookup (symbol);
             
             if (match) {
@@ -1106,52 +1584,11 @@ class Stacky {
         return lookup (Cell.from!"symbol" (symbol));
     }
 
-    bool hasNextToken () {
-        "hasNextToken: ep %d, exe-length: %d, top-length %d"
-            .writefln (
-                    ep, 
-                    execution.length, 
-                    execution [$ -1].length);
-
-        if (execution.length < 1) {
-            return false;
-        }
-
-        if (execution [$ -1].length <= ep
-        &&  execution.length  <= 1) {
-            return false;
-        }
-        return true;
-    }
-
-    Cell nextToken () {
-        if (! hasNextToken ()) {
-            throw new StackUnderflow ("No longer any tokens.");
-        }
-
-        if (ep > execution [$ -1].length) {
-            ep = 0;
-            execution.length -= 1;
-
-            if (! hasNextToken ()) {
-                throw new StackUnderflow (
-                    "No longer any tokens after execution stack pop.");
-            }
-        }
-
-        "ep: %s, execution [$ -1]: %s".writefln (ep, execution [$ -1]);
-        return execution [$ -1][ep ++];
-    }
-
     void eval (string input) {
-        "eval: operands: %s".writefln (operands);
-        execution ~= parse (input);
-        ep = 0;
+        execution.add (parse (input));
 
-        while (hasNextToken ()) {
-            Cell token = nextToken ();
+        foreach (token; execution) {
             push (token);
-            "eval ++ ip: %d".writefln (ip);
 
             switch (token.kind) {
                 case Cell.Integer: 
@@ -1161,7 +1598,6 @@ class Stacky {
                 case Cell.Array:
                 case Cell.Dict:
                 case Cell.Proc:
-                    "eval ++ ip: %d".writefln (ip);
                     continue;
 
                 case Cell.Symbol:
@@ -1170,18 +1606,27 @@ class Stacky {
                 default:
             }
         }
-        execution.length -= 1;
     }
 
     void evalSymbol (ref Cell op) {
         "eval symbol %s".writefln (op);
         if (op.symbol.startsWith ("/")
+        && !op.symbol.startsWith ("//")
         &&  op.symbol.length > 1)
         {
             op.symbol = op.symbol [1..$];
             return;
         }
 
+        bool immediate = false; 
+
+        if (op.symbol.startsWith ("//")
+        &&  op.symbol.length > 2)
+        {
+            immediate = true;
+            op.symbol = op.symbol [2..$];
+        }
+                
         Cell * match = lookup (op);
 
         if (! match) {
@@ -1190,24 +1635,28 @@ class Stacky {
                 ~ op.toString);
         }
 
+        if (immediate) {
+            "eval symbol: //%s immediate : %s".writefln (op.symbol, *match);
+            execution.add ([*match]);
+            return;
+        }
+
         "eval symbol: match : %s".writefln (*match);
         "eval symbol pop: before, stack: %s".writefln (operands);
         lookup ("pop").proc.native (this);
         
         "eval symbol pop: after, stack: %s".writefln (operands);
 
-        
-        if (match.proc.kind == Procedure.Native) {
-            "eval native!".writeln;
-            match.proc.native (this);
+        if (match.kind == Cell.Proc) {
+            if (match.proc.kind == Procedure.Native) {
+                "eval native!".writeln;
+                match.proc.native (this);
 
-        } else if (match.proc.kind == Procedure.Words) {
-            size_t saveIp = ip;
-
-            foreach (cell; match.proc.code.array) {
-                push (cell);
+            } else if (match.proc.kind == Procedure.Words) {
+                execution.add (match.proc.code.array);
             }
-            ip = saveIp;
+        } else {
+            push (*match);
         }
     }
 }
@@ -1230,6 +1679,14 @@ void stackyTest () {
     stacky.eval (`clear-to-mark print-stack`);
     stacky.eval (`( 1 2 3 ) print-stack`);
     stacky.eval (`[ "hello" "world" ] print-stack`);
+    stacky.eval (`{ dup dup } print-stack`);
+    stacky.eval (`clear-stack`);
+    stacky.eval (`/2dup { dup dup } def print-stack`);
+    stacky.eval (`1 2 2dup print-stack`);
+    stacky.eval (`clear-stack`);
+    stacky.eval (`1 2 stack-length print-stack`);
+    stacky.eval (`+ print-stack`);
+    stacky.eval (`* print-stack`);
 }
 
 void main () {
