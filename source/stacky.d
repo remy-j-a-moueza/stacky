@@ -726,6 +726,18 @@ struct Cell {
         return this.floating;
     }
 
+    void eval (Stacky stacky) {
+        if (kind != Proc) {
+            throw new InvalidCellKind ("Cell.eval: Not a Proc.");
+        }
+
+        if (proc.kind == Procedure.Native) {
+            proc.native (stacky);
+        } else if (proc.kind == Procedure.Words) {
+            stacky.eval (proc.code);
+        }
+    }
+
 }
 
 void cellTest () {
@@ -1023,13 +1035,10 @@ class Stacky {
     void push (Cell cell) {
         operands ~= cell;
         ip ++;
-        "push (%s), ip == %d".writefln (cell, ip);
     }
 
 
     void pop () {
-        "pop: before: ip (%d), %s".writefln (ip, operands);
-        
         if (operands.length < 1) {
             throw new StackUnderflow ("pop");
         }
@@ -1042,7 +1051,7 @@ class Stacky {
                 =  operands [0     .. ip]
                 ~  operands [ip +1 .. $];
         }
-        "pop: after %s".writefln (operands);
+        
         -- ip;
     };
 
@@ -1564,6 +1573,131 @@ class Stacky {
                 }) (stacky);
         };
 
+
+        procs ["length"] = (Stacky stacky) {
+            if (operands.length < 1) {
+                throw new StackUnderflow ("length: not enough arguments.");
+            }
+
+            Cell cell = stacky.top;
+
+            if (cell.kind == Cell.Array) {
+                stacky.pop ();
+                stacky.push (Cell.from (cell.array.length));
+            }
+            else if (cell.kind == Cell.Dict) {
+                stacky.pop ();
+                stacky.push (Cell.from (cell.dict.length));
+            }
+            else {
+                throw new InvalidCellKind ("length: object has no length.");
+            }
+        };
+
+        procs ["get"] = (Stacky stacky) {
+            if (operands.length < 2) {
+                throw new StackUnderflow ("get: not enough arguments.");
+            }
+
+            Cell index = stacky.index (1);
+            Cell cell  = stacky.index (2);
+
+            if (cell.kind == Cell.Array || cell.kind == Cell.Dict) {
+                stacky.pop ();
+                stacky.pop ();
+                stacky.push (cell [index]);
+            }
+            else {
+                throw new InvalidCellKind ("length: object has no length.");
+            }
+        };
+
+        procs ["put"] = (Stacky stacky) {
+            if (operands.length < 3) {
+                throw new StackUnderflow ("get: not enough arguments.");
+            }
+
+            Cell value = stacky.index (1);
+            Cell index = stacky.index (2);
+            Cell cell  = stacky.index (3);
+
+            if (cell.kind == Cell.Array || cell.kind == Cell.Dict) {
+                stacky.pop ();
+                stacky.pop ();
+                stacky.pop ();
+                cell [index] = value;
+            }
+            else {
+                throw new InvalidCellKind ("length: object has no length.");
+            }
+        };
+
+        procs ["a-store"] = (Stacky stacky) {
+            if (operands.length < 1) {
+                throw new StackUnderflow ("a-store: not enough arguments.");
+            }
+            
+            Cell array = stacky.index (1);
+
+            if (array.kind != Cell.Array) {
+                throw new InvalidCellKind ("a-store: not an Array.");
+            }
+
+            if (ip -1 == 0) {
+                return;
+            }
+
+            stacky.pop ();
+            array.array ~= operands [0.. ip];
+        };
+        
+        procs ["a-load"] = (Stacky stacky) {
+            if (operands.length < 1) {
+                throw new StackUnderflow ("a-store: not enough arguments.");
+            }
+            
+            Cell array = stacky.index (1);
+
+            if (array.kind != Cell.Array) {
+                throw new InvalidCellKind ("a-store: not an Array.");
+            }
+
+            if (ip -1 == 0) {
+                return;
+            }
+
+            stacky.pop ();
+
+            foreach (cell; array.array) {
+                stacky.push (cell);
+            }
+        };
+        
+        procs ["for-all"] = (Stacky stacky) {
+            if (operands.length < 2) {
+                throw new StackUnderflow ("for-all: not enough arguments.");
+            }
+            
+            Cell array = stacky.index (2);
+            Cell proc  = stacky.index (1);
+
+            if (array.kind != Cell.Array) {
+                throw new InvalidCellKind ("for-all: not an Array.");
+            }
+            
+            if (proc.kind != Cell.Proc) {
+                throw new InvalidCellKind ("for-all: not a Proc.");
+            }
+
+            stacky.pop ();
+            stacky.pop ();
+            
+            foreach (cell; array.array) {
+                stacky.push (cell);
+                proc.eval (stacky);    
+            }
+        };
+
         return Cell.from!("symbol", string, Procedure.NativeType) (procs);
     }
 
@@ -1585,10 +1719,16 @@ class Stacky {
     }
 
     void eval (string input) {
-        execution.add (parse (input));
+        eval (parse (input));
+    }
+
+    void eval (Cell [] tokens) {
+        execution.add (tokens);
+        //execution.insert (tokens);
 
         foreach (token; execution) {
             push (token);
+            "eval (%s) %s || %s".writefln (token, operands, execution.array);
 
             switch (token.kind) {
                 case Cell.Integer: 
@@ -1609,7 +1749,6 @@ class Stacky {
     }
 
     void evalSymbol (ref Cell op) {
-        "eval symbol %s".writefln (op);
         if (op.symbol.startsWith ("/")
         && !op.symbol.startsWith ("//")
         &&  op.symbol.length > 1)
@@ -1641,15 +1780,10 @@ class Stacky {
             return;
         }
 
-        "eval symbol: match : %s".writefln (*match);
-        "eval symbol pop: before, stack: %s".writefln (operands);
-        lookup ("pop").proc.native (this);
+        pop ();
         
-        "eval symbol pop: after, stack: %s".writefln (operands);
-
         if (match.kind == Cell.Proc) {
             if (match.proc.kind == Procedure.Native) {
-                "eval native!".writeln;
                 match.proc.native (this);
 
             } else if (match.proc.kind == Procedure.Words) {
@@ -1669,7 +1803,7 @@ void stackyTest () {
     //stacky.push (Cell.from (1));
     //stacky.push (Cell.from (2));
 
-    stacky.operands.writeln;
+    //stacky.operands.writeln;
     stacky.eval ("1 2 3 print-stack");
     stacky.eval ("dup print-stack");
     stacky.eval ("drop swap print-stack");
@@ -1687,6 +1821,8 @@ void stackyTest () {
     stacky.eval (`1 2 stack-length print-stack`);
     stacky.eval (`+ print-stack`);
     stacky.eval (`* print-stack`);
+    stacky.eval (`clear-stack`);
+    stacky.eval (`( 1 2 3 ) { 2 + } for-all print-stack`);
 }
 
 void main () {
