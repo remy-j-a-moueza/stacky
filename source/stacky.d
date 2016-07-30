@@ -8,6 +8,8 @@ import std.digest.sha;
 import std.range;
 import std.math;
 
+import core.exception;
+
 import pegged.grammar;
 import pegged.tester.grammartester;
 
@@ -452,7 +454,7 @@ struct Cell {
     string toString () {
         switch (kind) {
             case Integer:
-                return integer.to!string ~ "d";
+                return integer.to!string ~ "i";
             case Floating:
                 return floating.to!string ~ "f";
             case String:
@@ -462,7 +464,10 @@ struct Cell {
             case Bool:
                 return boolean.to!string;
             case Array:
-                return array.to!string;
+                return "(%s)".format (
+                            array.map!(to!string)
+                                 .array
+                                 .join (", "));
             case Dict:
                 string [] repr;
                 
@@ -727,15 +732,18 @@ struct Cell {
     }
 
     void eval (Stacky stacky) {
+        "Cell.eval in %s".writefln (this);
         if (kind != Proc) {
             throw new InvalidCellKind ("Cell.eval: Not a Proc.");
         }
 
         if (proc.kind == Procedure.Native) {
             proc.native (stacky);
+
         } else if (proc.kind == Procedure.Words) {
-            stacky.eval (proc.code);
+            stacky.eval (proc.code ~ Cell.from!"symbol" ("exit"));
         }
+        "Cell.eval out %s".writefln (this);
     }
 
 }
@@ -762,11 +770,11 @@ void cellTest () {
 
     Cell dict = Cell.from (["hello": "world"]);
 
-    assert (anInt.toString   == "0d");
+    assert (anInt.toString   == "0i");
     assert (aReal.toString   == "0f");
     assert (aString.toString == `"hello"`);
     assert (aBool.toString   == "true");
-    assert (anArray.toString == `["hello", "world"]`);
+    assert (anArray.toString == `("hello", "world")`);
 
     anInt.writeln; 
     aReal.writeln;
@@ -839,84 +847,51 @@ Cell index (Cell [] stack, size_t n) {
     return stack [$ -1 -n];
 }
 
-/// An Input Range over cells.
-class CellRange {
-    size_t cursor = 0;
-    Cell [] cells;
-
-    this (Cell [] array) {
-        this.cells = array;
-    }
-
-    bool empty () {
-        return cursor == length;
-    }
-
-    size_t length () {
-        return cells.length;
-    }
-
-    Cell front () {
-        if (length <= cursor) {
-            throw new Exception ("CellRange front: no more cells.");
-        }
-        return cells [cursor];
-    }
-
-    void popFront () {
-        ++ cursor;
-    }
-
-}
 
 /// An Input Range over a stack of arrays of cells.
 class ExecutionStack {
     size_t cursor = 0;
-    CellRange [] stack;
+    Cell [] stack;
 
-    this () {
-        cursor = 0;
-        stack  = [];
+    this (Cell [] stackIn = [], size_t cursor = 0) {
+        this.stack  = stackIn;
+        this.cursor = cursor;
+
+    }
+
+    ExecutionStack dup () {
+        return new ExecutionStack (stack, cursor);
     }
 
     bool empty () {
-        if (stack is null) {
-            return true;
-        }
-
-        if (stack.empty) {
-            return true;
-        }
-
-        if (stack.length == 1 && stack.back.empty) {
-            stack.popBack ();
-            return true;
-        }
-        return false;
+        return cursor >= stack.length;
     }
 
     Cell front () {
-        return stack.back.front;
+        //"    ExecutionStack.front: %s".writefln (stack [min (cursor, $-1)]);
+        return stack [min (cursor, $-1)];
     }
 
     void popFront () {
-        if (stack.empty) {
-            return;
-        }
-        if (stack.back.empty) {
-            stack.popBack ();
-            return;
-        }
-        stack.back.popFront;
+        //"    ExecutionStack.popFront %s".writefln (front);
+        ++ cursor;
     }
 
     ExecutionStack add (Cell [] array) {
-        this.stack ~= new CellRange (array);
+        if (empty) {
+            stack = array;
+            return this;
+        }
+        stack = array ~ stack [cursor .. $];
+        cursor = 0;
+        //"    ExecutionStack.add: %s".writefln (stack);
         return this;
     }
 
+    void hold () {
+        cursor --;
+    }
 }
-
 
 /// A template for math binary operations.
 void numberOp (void delegate (long, long) integerOp, 
@@ -1035,6 +1010,7 @@ class Stacky {
     void push (Cell cell) {
         operands ~= cell;
         ip ++;
+        //`push "%s", ip == %d => %s`.writefln (cell, ip, operands);
     }
 
 
@@ -1042,6 +1018,8 @@ class Stacky {
         if (operands.length < 1) {
             throw new StackUnderflow ("pop");
         }
+
+        Cell cell = top;
         
         if (operands.length == ip) {
             operands.length -= 1;
@@ -1051,7 +1029,7 @@ class Stacky {
                 =  operands [0     .. ip]
                 ~  operands [ip +1 .. $];
         }
-        
+        //`pop "%s": after %s`.writefln (cell, operands);
         -- ip;
     };
 
@@ -1672,7 +1650,7 @@ class Stacky {
                 stacky.push (cell);
             }
         };
-        
+
         procs ["for-all"] = (Stacky stacky) {
             if (operands.length < 2) {
                 throw new StackUnderflow ("for-all: not enough arguments.");
@@ -1691,10 +1669,73 @@ class Stacky {
 
             stacky.pop ();
             stacky.pop ();
-            
+            stacky.execution.popFront;
+
             foreach (cell; array.array) {
                 stacky.push (cell);
                 proc.eval (stacky);    
+            }
+
+            // execution.popFront will be called twice:
+            // hold the cursor in place.
+            stacky.execution.hold ();
+        };
+
+        procs ["if"] = (Stacky stacky) {
+            if (operands.length < 2) {
+                throw new StackUnderflow ("if: not enough arguments.");
+            }
+
+            Cell proc = stacky.index (1);
+            Cell cond = stacky.index (2);
+
+            if (proc.kind != Cell.Proc) {
+                throw new InvalidCellKind (
+                    "if: not a Proc: %s.".format (proc));
+            }
+            if (proc.kind != Cell.Proc) {
+                throw new InvalidCellKind (
+                    "if: not a Bool: %s.".format (cond));
+            }
+
+            stacky.pop ();
+            stacky.pop ();
+
+            if (cond.boolean) {
+                proc.eval (stacky);
+            }
+        };
+        
+        procs ["ifelse"] = (Stacky stacky) {
+            if (operands.length < 3) {
+                throw new StackUnderflow ("if: not enough arguments.");
+            }
+
+            Cell procElse = stacky.index (1);
+            Cell procIf   = stacky.index (2);
+            Cell cond     = stacky.index (3);
+
+            if (procIf.kind != Cell.Proc) {
+                throw new InvalidCellKind (
+                    "ifelse (if): not a Proc: %s.".format (procIf));
+            }
+            if (procElse.kind != Cell.Proc) {
+                throw new InvalidCellKind (
+                    "ifelse (else): not a Proc: %s.".format (procElse));
+            }
+            if (cond.kind != Cell.Bool) {
+                throw new InvalidCellKind (
+                    "if: not a Bool: %s.".format (cond));
+            }
+
+            stacky.pop ();
+            stacky.pop ();
+            stacky.pop ();
+
+            if (cond.boolean) {
+                procIf.eval (stacky);
+            } else {
+                procElse.eval (stacky);
             }
         };
 
@@ -1719,16 +1760,24 @@ class Stacky {
     }
 
     void eval (string input) {
+        `eval "%s"`.writefln (input);
         eval (parse (input));
     }
 
     void eval (Cell [] tokens) {
+        "%s".writefln ('='.repeat (50));
+        operands [0.. ip].writeln;
+        "%s".writefln ('='.repeat (50));
+        
+        "eval %s".writefln (tokens);
         execution.add (tokens);
-        //execution.insert (tokens);
 
         foreach (token; execution) {
+            "%s".writefln ('-'.repeat (50));
+            operands [0.. ip].writeln;
+            "%s".writefln ('-'.repeat (50));
             push (token);
-            "eval (%s) %s || %s".writefln (token, operands, execution.array);
+            `eval "%s" %s `.writefln (token, operands);
 
             switch (token.kind) {
                 case Cell.Integer: 
@@ -1741,6 +1790,13 @@ class Stacky {
                     continue;
 
                 case Cell.Symbol:
+                    if (token.symbol == "exit"
+                    ||  token.symbol == "break") {
+                        "exiting.".writeln;
+                        pop ();
+                        execution.popFront ();
+                        return;
+                    }
                     evalSymbol (token);
                     continue;
                 default:
@@ -1749,6 +1805,8 @@ class Stacky {
     }
 
     void evalSymbol (ref Cell op) {
+        `evalSymbol %s`.writefln (op);
+
         if (op.symbol.startsWith ("/")
         && !op.symbol.startsWith ("//")
         &&  op.symbol.length > 1)
@@ -1802,27 +1860,31 @@ void stackyTest () {
     
     //stacky.push (Cell.from (1));
     //stacky.push (Cell.from (2));
-
-    //stacky.operands.writeln;
-    stacky.eval ("1 2 3 print-stack");
-    stacky.eval ("dup print-stack");
-    stacky.eval ("drop swap print-stack");
-    stacky.eval ("2 copy print-stack");
-    stacky.eval ("3 rolln print-stack");
-    stacky.eval (`mark "hello" "world" count-to-mark print-stack`);
-    stacky.eval (`clear-to-mark print-stack`);
-    stacky.eval (`( 1 2 3 ) print-stack`);
-    stacky.eval (`[ "hello" "world" ] print-stack`);
-    stacky.eval (`{ dup dup } print-stack`);
-    stacky.eval (`clear-stack`);
-    stacky.eval (`/2dup { dup dup } def print-stack`);
-    stacky.eval (`1 2 2dup print-stack`);
-    stacky.eval (`clear-stack`);
+    
+    //stacky.eval ("1 2 3 print-stack");
+    //stacky.eval ("dup print-stack");
+    //stacky.eval ("drop swap print-stack");
+    //stacky.eval ("2 copy print-stack");
+    //stacky.eval ("3 rolln print-stack");
+    //stacky.eval (`mark "hello" "world" count-to-mark print-stack`);
+    //stacky.eval (`clear-to-mark print-stack`);
+    //stacky.eval (`( 1 2 3 ) print-stack`);
+    //stacky.eval (`[ "hello" "world" ] print-stack`);
+    //stacky.eval (`{ dup dup } print-stack`);
+    //stacky.eval (`clear-stack`);
+    //stacky.eval (`/2dup { dup dup } def print-stack`);
+    //stacky.eval (`1 2 2dup print-stack`);
+    //stacky.eval (`clear-stack`);
     stacky.eval (`1 2 stack-length print-stack`);
     stacky.eval (`+ print-stack`);
     stacky.eval (`* print-stack`);
     stacky.eval (`clear-stack`);
-    stacky.eval (`( 1 2 3 ) { 2 + } for-all print-stack`);
+    stacky.eval (`( 1 2 3 ) { 2 + } for-all print-stack print-stack`);
+    //stacky.eval (`true { 2 } if print-stack`);
+    //stacky.eval (`false { 1 } { 2 } ifelse print-stack`);
+
+    "%s".writefln ('*'.repeat (30));
+    stacky.operands.writeln;
 }
 
 void main () {
