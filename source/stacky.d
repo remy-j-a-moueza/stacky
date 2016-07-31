@@ -731,8 +731,9 @@ struct Cell {
         return this.floating;
     }
 
+    /// Evaluate a procedure, given a Stacky interpreter.
     void eval (Stacky stacky) {
-        "Cell.eval in %s".writefln (this);
+        //"Cell.eval in %s".writefln (this);
         if (kind != Proc) {
             throw new InvalidCellKind ("Cell.eval: Not a Proc.");
         }
@@ -743,7 +744,7 @@ struct Cell {
         } else if (proc.kind == Procedure.Words) {
             stacky.eval (proc.code ~ Cell.from!"symbol" ("exit"));
         }
-        "Cell.eval out %s".writefln (this);
+        //"Cell.eval out %s".writefln (this);
     }
 
 }
@@ -850,44 +851,55 @@ Cell index (Cell [] stack, size_t n) {
 
 /// An Input Range over a stack of arrays of cells.
 class ExecutionStack {
+    /// Keeps track of the iteration.
     size_t cursor = 0;
+
+    /// The cells to be executed.
     Cell [] stack;
 
+    /// Create a new task. May pass a cursor.
     this (Cell [] stackIn = [], size_t cursor = 0) {
         this.stack  = stackIn;
         this.cursor = cursor;
 
     }
 
+    /// Duplicate this object.
     ExecutionStack dup () {
-        return new ExecutionStack (stack, cursor);
+        return new ExecutionStack (stack.dup, cursor);
     }
 
+    /// Is this stack empty?
     bool empty () {
         return cursor >= stack.length;
     }
 
+    /// The front of the stack: next element to iterate.
     Cell front () {
         //"    ExecutionStack.front: %s".writefln (stack [min (cursor, $-1)]);
         return stack [min (cursor, $-1)];
     }
 
+    /// Move on to the next element.
     void popFront () {
         //"    ExecutionStack.popFront %s".writefln (front);
         ++ cursor;
     }
 
-    ExecutionStack add (Cell [] array) {
+    /// Insert the given array for execution.
+    ExecutionStack insert (Cell [] array) {
         if (empty) {
-            stack = array;
+            stack  = array;
+            cursor = 0;
             return this;
         }
         stack = array ~ stack [cursor .. $];
         cursor = 0;
-        //"    ExecutionStack.add: %s".writefln (stack);
+        //"    ExecutionStack.insert: %s".writefln (stack);
         return this;
     }
 
+    /// Prevents a iteration to the next element of the stack.
     void hold () {
         cursor --;
     }
@@ -979,6 +991,8 @@ void numBinaryOp (alias binOp) (Stacky stacky) {
         }) (stacky);
 }
 
+/** The Stacky interpreter.
+ */
 class Stacky {
     
     /// Operand stack. The top is the end of the array.
@@ -993,10 +1007,14 @@ class Stacky {
     /// Instruction pointer.
     size_t ip = 0;
     
+    /// Returns the top of the operand stack.
     Cell top () {
         return operands [0.. ip].top; 
     }
 
+    /** Returns the element at index n on the operand stack.
+      index (1) is the top of the stack.
+     */
     Cell index (size_t n) {
         Cell [] slice = operands [0 .. ip];
         
@@ -1007,6 +1025,7 @@ class Stacky {
         return slice [ip - n]; 
     }
 
+    /// Push an element on the operand stack.
     void push (Cell cell) {
         operands ~= cell;
         ip ++;
@@ -1014,6 +1033,7 @@ class Stacky {
     }
 
 
+    /// Remove the element at the top of the stack.
     void pop () {
         if (operands.length < 1) {
             throw new StackUnderflow ("pop");
@@ -1034,7 +1054,10 @@ class Stacky {
     };
 
     this () {
+        // Create the builtin words.
         dicts ~= builtinWords ();
+
+        // A new dictionary on top of the builtins for user defined words.
         Cell userDict = {
             kind: Cell.Dict, 
             dict: null
@@ -1044,6 +1067,7 @@ class Stacky {
     }
 
 
+    /// Create the builtin words.
     Cell builtinWords () {
         Procedure.NativeType [string] procs;
         
@@ -1214,7 +1238,7 @@ class Stacky {
         /// Prints the stack on stdout.
         procs ["print-stack"] = (Stacky stacky) {
             //"print-stack: to ip : %s".writefln (stacky.operands [0 ..ip]);
-            "print-stack: all   : %s".writefln (stacky.operands);
+            //"print-stack: all   : %s".writefln (stacky.operands);
             string [] vals; 
 
             foreach (cell; stacky.operands [0 .. ip]) {
@@ -1742,6 +1766,7 @@ class Stacky {
         return Cell.from!("symbol", string, Procedure.NativeType) (procs);
     }
 
+    /// Look up for a symbol in the dictionary stack.
     Cell * lookup (Cell symbol) {
         Cell * match;
 
@@ -1755,29 +1780,35 @@ class Stacky {
         return match;
     }
 
+    /** Look up for a symbol in the dictionary stack. The given string is 
+      converted to a Cell Symbol.
+      */
     Cell * lookup (string symbol) {
         return lookup (Cell.from!"symbol" (symbol));
     }
 
+    /** Evaluate an input string. */
     void eval (string input) {
-        `eval "%s"`.writefln (input);
+        //`eval "%s"`.writefln (input);
         eval (parse (input));
     }
 
+    /** Evaluate an input array of cells. */
     void eval (Cell [] tokens) {
-        "%s".writefln ('='.repeat (50));
-        operands [0.. ip].writeln;
-        "%s".writefln ('='.repeat (50));
+        //"%s".writefln ('='.repeat (50));
+        //operands [0.. ip].writeln;
+        //"%s".writefln ('='.repeat (50));
         
-        "eval %s".writefln (tokens);
-        execution.add (tokens);
+        //"eval %s".writefln (tokens);
+        execution.insert (tokens);
+        //"execution: %s|%s".writefln (execution.dup, execution.dup.cursor);
 
         foreach (token; execution) {
-            "%s".writefln ('-'.repeat (50));
-            operands [0.. ip].writeln;
-            "%s".writefln ('-'.repeat (50));
+            //"%s".writefln ('-'.repeat (50));
+            //operands [0.. ip].writeln;
+            //"%s".writefln ('-'.repeat (50));
             push (token);
-            `eval "%s" %s `.writefln (token, operands);
+            //`eval "%s" %s `.writefln (token, operands);
 
             switch (token.kind) {
                 case Cell.Integer: 
@@ -1792,7 +1823,7 @@ class Stacky {
                 case Cell.Symbol:
                     if (token.symbol == "exit"
                     ||  token.symbol == "break") {
-                        "exiting.".writeln;
+                        //"exiting.".writeln;
                         pop ();
                         execution.popFront ();
                         return;
@@ -1805,7 +1836,7 @@ class Stacky {
     }
 
     void evalSymbol (ref Cell op) {
-        `evalSymbol %s`.writefln (op);
+        //`evalSymbol %s`.writefln (op);
 
         if (op.symbol.startsWith ("/")
         && !op.symbol.startsWith ("//")
@@ -1834,7 +1865,7 @@ class Stacky {
 
         if (immediate) {
             "eval symbol: //%s immediate : %s".writefln (op.symbol, *match);
-            execution.add ([*match]);
+            execution.insert ([*match]);
             return;
         }
 
@@ -1845,7 +1876,7 @@ class Stacky {
                 match.proc.native (this);
 
             } else if (match.proc.kind == Procedure.Words) {
-                execution.add (match.proc.code.array);
+                execution.insert (match.proc.code.array);
             }
         } else {
             push (*match);
@@ -1861,30 +1892,31 @@ void stackyTest () {
     //stacky.push (Cell.from (1));
     //stacky.push (Cell.from (2));
     
-    //stacky.eval ("1 2 3 print-stack");
-    //stacky.eval ("dup print-stack");
-    //stacky.eval ("drop swap print-stack");
-    //stacky.eval ("2 copy print-stack");
-    //stacky.eval ("3 rolln print-stack");
-    //stacky.eval (`mark "hello" "world" count-to-mark print-stack`);
-    //stacky.eval (`clear-to-mark print-stack`);
-    //stacky.eval (`( 1 2 3 ) print-stack`);
-    //stacky.eval (`[ "hello" "world" ] print-stack`);
-    //stacky.eval (`{ dup dup } print-stack`);
-    //stacky.eval (`clear-stack`);
-    //stacky.eval (`/2dup { dup dup } def print-stack`);
-    //stacky.eval (`1 2 2dup print-stack`);
-    //stacky.eval (`clear-stack`);
+    stacky.eval ("1 2 3 print-stack");
+    stacky.eval ("dup print-stack");
+    stacky.eval ("drop swap print-stack");
+    stacky.eval ("2 copy print-stack");
+    stacky.eval ("3 rolln print-stack");
+    stacky.eval (`mark "hello" "world" count-to-mark print-stack`);
+    stacky.eval (`clear-to-mark print-stack`);
+    stacky.eval (`( 1 2 3 ) print-stack`);
+    stacky.eval (`[ "hello" "world" ] print-stack`);
+    stacky.eval (`{ dup dup } print-stack`);
+    stacky.eval (`clear-stack`);
+    stacky.eval (`/2dup { dup dup } def print-stack`);
+    stacky.eval (`1 2 2dup print-stack`);
+    stacky.eval (`clear-stack`);
     stacky.eval (`1 2 stack-length print-stack`);
     stacky.eval (`+ print-stack`);
     stacky.eval (`* print-stack`);
     stacky.eval (`clear-stack`);
     stacky.eval (`( 1 2 3 ) { 2 + } for-all print-stack print-stack`);
-    //stacky.eval (`true { 2 } if print-stack`);
-    //stacky.eval (`false { 1 } { 2 } ifelse print-stack`);
+    stacky.eval (`true { 2 } if print-stack`);
+    stacky.eval (`false { 1 } { 2 } ifelse print-stack`);
 
     "%s".writefln ('*'.repeat (30));
     stacky.operands.writeln;
+    stacky.execution.dup.writeln;
 }
 
 void main () {
