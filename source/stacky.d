@@ -290,6 +290,8 @@ class Cell {
         self.symbol = val;
         return self;
     }
+
+    alias fromSymbol = symbolNew;
     
     /// Initialization from a boolean value.
     static Cell fromBool (bool val) {
@@ -869,13 +871,16 @@ class ExecutionStack {
     /// The front of the stack: next element to iterate.
     Cell front () {
         //"    ExecutionStack.front: %s".writefln (stack [min (cursor, $-1)]);
-        return stack [min (cursor, $-1)];
+        
+        /* Return the token and also increase the cursor. */
+        return stack [min (cursor ++, $-1)];
     }
 
     /// Move on to the next element.
     void popFront () {
-        //"    ExecutionStack.popFront %s".writefln (front);
-        ++ cursor;
+        /** Actually don't do anything here:
+          once we gave a token, it's over, we move on to the next immediately.
+         */
     }
 
     /// Insert the given array for execution.
@@ -885,17 +890,12 @@ class ExecutionStack {
             cursor = 0;
             return this;
         }
-        "    ExecutionStack.insert [%s] ~ %s ~ %s"
-            .writefln ([front], array, stack [ cursor +1 .. $]);
-        stack = [front] ~ array ~ stack [ ++ cursor .. $];
+        "    ExecutionStack.insert %s ~ %s"
+            .writefln (array, stack [ cursor .. $]);
+        stack = array ~ stack [cursor .. $];
         cursor = 0;
         //"    ExecutionStack.insert: %s".writefln (stack);
         return this;
-    }
-
-    /// Prevents a iteration to the next element of the stack.
-    void hold () {
-        cursor --;
     }
 }
 
@@ -1393,13 +1393,25 @@ class Stacky {
             
             if (name.kind != Cell.Symbol) {
                 throw new InvalidCellKind (
-                    "Invalid 1st argument %s, typed %s: not a symbol."
+                    "def: Invalid 1st argument %s, typed %s: not a symbol."
                     .format (name, name.kindStr));
             }
             stacky.pop ();
             stacky.pop ();
+            
+            Cell key;
 
-            stacky.dicts.top [name] = obj;
+            if (name.symbol.startsWith ("/")
+            && !name.symbol.startsWith ("//")
+            &&  name.symbol.length > 1) 
+            {
+                key = Cell.fromSymbol (name.symbol [1..$]);
+            
+            } else {
+                key = name;
+            }
+
+            stacky.dicts.top [key] = obj;
         };
 
         procs ["not"] = (Stacky stacky) {
@@ -1796,8 +1808,6 @@ class Stacky {
 
             stacky.pop ();
             stacky.pop ();
-            stacky.execution.popFront;
-            stacky.execution.popFront;
             
             if (cont.kind == Cell.Array) {
                 foreach (cell; cont.array) {
@@ -1818,10 +1828,6 @@ class Stacky {
                     proc.eval (stacky);
                 }
             }
-
-            // execution.popFront will be called twice:
-            // hold the cursor in place.
-            stacky.execution.hold ();
         };
 
         procs ["if"] = (Stacky stacky) {
@@ -1965,21 +1971,22 @@ class Stacky {
         && !op.symbol.startsWith ("//")
         &&  op.symbol.length > 1)
         {
-            op.symbol = op.symbol [1..$];
             "/ symbol: %s".writefln (op);
             return;
         }
 
         bool immediate = false; 
+        Cell * match   = null;
 
         if (op.symbol.startsWith ("//")
         &&  op.symbol.length > 2)
         {
             immediate = true;
-            op.symbol = op.symbol [2..$];
-        }
+            match     = lookup (Cell.fromSymbol (op.symbol [2 .. $]));
+        } else {
                 
-        Cell * match = lookup (op);
+            match     = lookup (op);
+        }
 
         if (! match) {
             throw new Exception (
@@ -1988,7 +1995,7 @@ class Stacky {
         }
 
         if (immediate) {
-            "eval symbol: //%s immediate : %s".writefln (op.symbol, *match);
+            "eval symbol: %s immediate : %s".writefln (op.symbol, *match);
             execution.insert ([*match]);
             return;
         }
@@ -2014,8 +2021,10 @@ void stackyTest () {
 
     assert (stacky.operands == []);
     
-    //stacky.push (Cell.from (1));
-    //stacky.push (Cell.from (2));
+    stacky.push (Cell.from (1));
+    stacky.push (Cell.from (2));
+
+    assert (stacky.operands == [Cell.from (1), Cell.from (2)]);
     
     //stacky.eval ("1 2 3 print-stack");
     //stacky.eval ("dup print-stack");
@@ -2036,32 +2045,32 @@ void stackyTest () {
     //stacky.eval (`* print-stack`);
     //stacky.eval (`clear-stack`);
     //stacky.eval (`( 1 2 3 ) { 2 + } for-all print-stack print-stack`);
-    stacky.eval (`true { 2 } if print-stack`);
-    stacky.eval (`false { 1 } { 2 } ifelse print-stack`);
-    stacky.eval (`clear-stack`);
-    stacky.eval (`2 2 + 4 =`);
-    stacky.eval (`clear-stack`);
-    stacky.eval (`( 0 1 2 3 ) 1 get`);
-    stacky.eval (`clear-stack`);
-    stacky.eval (`"hello" 1 get`);
-    stacky.eval (`
-        clear-stack
+    //stacky.eval (`true { 2 } if print-stack`);
+    //stacky.eval (`false { 1 } { 2 } ifelse print-stack`);
+    //stacky.eval (`clear-stack`);
+    //stacky.eval (`2 2 + 4 =`);
+    //stacky.eval (`clear-stack`);
+    //stacky.eval (`( 0 1 2 3 ) 1 get`);
+    //stacky.eval (`clear-stack`);
+    //stacky.eval (`"hello" 1 get`);
+    //stacky.eval (`
+    //    clear-stack
 
-        /all { 
-            /proc   swap def 
-            /array  swap def
-            /status true def
-            
-            array { 
-                proc true = not { 
-                    /status false def 
-                } if 
-            } for-all
-            
-            status
-        } def 
-    `);
-    stacky.eval (` ( 1 2 3 ) { 5 < } all `);
+    //    /all { 
+    //        /proc   swap def 
+    //        /array  swap def
+    //        /status true def
+    //        
+    //        array { 
+    //            proc true = not { 
+    //                /status false def 
+    //            } if 
+    //        } for-all
+    //        
+    //        status
+    //    } def 
+    //`);
+    //stacky.eval (` ( 1 2 3 ) { 5 < } all `);
 
     "%s".writefln ('*'.repeat (30));
     stacky.operands.writeln;
