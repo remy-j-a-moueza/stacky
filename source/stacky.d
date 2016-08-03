@@ -729,8 +729,10 @@ class Cell {
     
     /// Convert to floating as needed.
     double floatValue () {
-        if (kind != Integer || kind != Floating) {
-            throw new InvalidCellKind ("asFloating: Not a Number.");
+        if (kind != Integer && kind != Floating) {
+            throw new InvalidCellKind (
+                "asFloating: Not a Number (%s): %s."
+                .format (kindStr, this));
         }
 
         if (kind == Integer) {
@@ -2063,10 +2065,10 @@ void stackyTest () {
     assert (stacky.operands 
             == map!(Cell.from) ([1, 2, 3, 2, 3]).array);
 
-    //stacky.eval (`clear-stack 1 2 3 2 rolln`);
-    //assert (stacky.operands 
-    //        == map!(Cell.from) ([2, 3, 1]).array);
-    //stacky.eval ("3 rolln print-stack");
+    stacky.eval (`clear-stack 1 2 3 2 rolln`);
+    assert (stacky.operands 
+            == map!(Cell.from) ([3, 2, 1]).array,
+            "operands: %s".format (stacky.operands));
 
     stacky.eval (`clear-stack mark "hello" "world" count-to-mark`);
     assert (stacky.top == Cell.from (2));
@@ -2099,8 +2101,8 @@ void stackyTest () {
     stacky.eval (`clear-stack 1 2 + 3 =`);
     assert (stacky.operands.top == Cell.fromBool (true));
 
-    //stacky.eval (`clear-stack 3.0 4 * 12.0 = `);
-    //assert (stacky.operands.top == Cell.fromBool (true));
+    stacky.eval (`clear-stack 3.0 4 * 12.0 = `);
+    assert (stacky.operands.top == Cell.fromBool (true));
 
     stacky.eval (`clear-stack ( 1 2 3 ) { 2 + } for-all`);
     assert (stacky.operands
@@ -2148,8 +2150,4 @@ void main () {
     cellTest ();
     parseTest ();
     stackyTest ();
-
-    //Stacky stacky = new Stacky; 
-    //stacky.eval ("1 2 3");
-    //stacky.operands.writeln;
 }
