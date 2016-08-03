@@ -89,7 +89,7 @@ class StackUnderflow : Exception {
   - made of words
   - natives: implemented by a D delegate.
  */
-struct Procedure {
+class Procedure {
     enum : int {
         Words,
         Native
@@ -106,26 +106,28 @@ struct Procedure {
     /// Native code.
     NativeType native; 
 
+    this (int kind, Cell [] code) {
+        this.kind = kind;
+        this.code = code;
+    }
+
+    this (int kind, NativeType native) {
+        this.kind   = kind;
+        this.native = native;
+    }
+
     /// Create a procedure from an array of code.
     static Procedure fromCode (Cell [] code) {
-        Procedure self =  { 
-            kind: Words,
-            code: code
-        };
-        return self;
+        return new Procedure (Words, code); 
     }
 
     /// Create a procedure from a D delegate.
     static Procedure fromDelegate (NativeType native) {
-        Procedure self =  { 
-            kind  : Native,
-            native: native
-        };
-        return self;
+        return new Procedure (Native, native);
     }
 
     /// Return a string representation.
-    string toString () {
+    override string toString () {
         switch (kind) {
             case Words:
                 return "{proc: code %s}".format (code.to!string);
@@ -140,7 +142,7 @@ struct Procedure {
       Compare pointers for native procedures.
       Compare arrays of code for words procedures.
      */
-    bool opEquals (ref const Procedure proc) const pure {
+    bool opEquals (ref const Procedure proc) const {
         if (kind != proc.kind) {
             return false;
         }
@@ -165,7 +167,7 @@ struct Procedure {
     }
 
     /// Comparison operator between two procedures.
-    int opCmp (ref const Procedure proc) const pure {
+    int opCmp (ref const Procedure proc) const {
         if (kind == Words && proc.kind == Native) {
             return 1;
         }
@@ -183,14 +185,11 @@ struct Procedure {
         }
 
         else if (kind == Words) {
-            Cell cCode = { 
-                kind: Cell.Array,
-                array: code.dup
-            };
-            Cell cProc = {
-                kind: Cell.Array,
-                array: proc.code.dup
-            };
+            Cell cCode  = new Cell (Cell.Array);
+            cCode.array = (cast (Cell []) this.code).dup;
+            
+            Cell cProc  = new Cell (Cell.Proc);
+            cProc.array = (cast (Cell []) proc.code).dup;
 
             if (cCode == cProc) { 
                 return 0;
@@ -205,7 +204,7 @@ struct Procedure {
 
 /** A cell on the stack.
  */
-struct Cell {
+class Cell {
     enum : int { 
         Integer, 
         Floating,
@@ -237,6 +236,10 @@ struct Cell {
         Cell [][string] dict;
     }
 
+    this (int kind) {
+        this.kind = kind;
+    }
+
     string kindStr () { 
         switch (kind) {
         case Integer: 
@@ -262,73 +265,57 @@ struct Cell {
 
     /// Initialization from a long value.
     static Cell fromLong (long val) {
-        Cell self = { 
-            kind    : Cell.Integer,
-            integer : val
-        };
+        Cell self = new Cell (Integer);
+        self.integer = val;
         return self;
     }
 
     /// Initialization from a double value.
     static Cell fromDouble (double val) {
-        Cell self = { 
-            kind     : Cell.Floating,
-            floating : val
-        };
+        Cell self = new Cell (Floating); 
+        self.floating = val;
         return self;
     }
     
     /// Initialization from a string value.
     static Cell fromString (string val) {
-        Cell self = { 
-            kind: Cell.String,
-            text: val
-        };
+        Cell self = new Cell (String); 
+        self.text = val;
         return self;
     }
 
     /// Initialization as a symbol from a string value.
     static Cell symbolNew (string val) {
-        Cell self = {
-            kind   : Cell.Symbol, 
-            symbol : val
-        };
+        Cell self = new Cell (Symbol);
+        self.symbol = val;
         return self;
     }
     
     /// Initialization from a boolean value.
     static Cell fromBool (bool val) {
-        Cell self = {
-            kind    : Cell.Bool,
-            boolean : val
-        };
+        Cell self = new Cell (Bool);
+        self.boolean = val;
         return self;
     }
     
     /// Initialization as an empty array.
     static Cell arrayNew () {
-        Cell self = {
-            kind: Cell.Array, 
-            array: []
-        };
+        Cell self = new Cell (Array);
+        self.array = [];
         return self;
     }
     
     /// Initialization as a procedure from an array of words.
     static Cell procFromCode (Cell [] array) {
-        Cell self = {
-            kind: Cell.Proc, 
-            proc: Procedure.fromCode (array)
-        };
+        Cell self = new Cell (Proc);
+        self.proc = Procedure.fromCode (array);
         return self;
     }
 
     /// Initialization as a procedure from a D delegate.
     static Cell procFromNative (Procedure.NativeType native) {
-        Cell self = { 
-            kind: Cell.Proc,
-            proc: Procedure.fromDelegate (native)
-        };
+        Cell self = new Cell (Proc);
+        self.proc = Procedure.fromDelegate (native);
         return self;
     }
 
@@ -426,10 +413,8 @@ struct Cell {
         ||  is (K : bool)
         ))
     {
-        Cell self = { 
-            kind: Dict,
-            dict: null
-        };
+        Cell self = new Cell (Dict); 
+        self.dict = null;
 
         foreach (k, v; dict) {
             Cell key = Cell.from!(stringKind) (k); 
@@ -444,14 +429,12 @@ struct Cell {
     
     
     static Cell dictNew () {
-        Cell self = { 
-            kind: Cell.Dict,
-            dict: null
-        };
+        Cell self = new Cell (Dict);
+        self.dict = null;
         return self;
     }
     
-    string toString () {
+    override string toString () {
         switch (kind) {
             case Integer:
                 return integer.to!string ~ "i";
@@ -462,7 +445,7 @@ struct Cell {
             case Symbol:
                 return symbol;
             case Bool:
-                return boolean.to!string;
+                return boolean ? "true" : "false";
             case Array:
                 return "(%s)".format (
                             array.map!(to!string)
@@ -485,7 +468,7 @@ struct Cell {
     }
 
     /// Equality operator.
-    bool opEquals (ref const Cell cell) const pure {
+    bool opEquals (ref const Cell cell) const {
         if (kind == Integer || kind == Floating) {
             switch (kind) {
                 case Integer:
@@ -558,7 +541,7 @@ struct Cell {
     }
     
     /// Comparison operator.
-    int opCmp (ref const Cell cell) const pure {
+    int opCmp (ref const Cell cell) const {
         if (kind == Integer || kind == Floating) {
             switch (kind) {
                 case Integer:
@@ -783,6 +766,12 @@ void cellTest () {
     aBool.writeln;
     anArray.writeln;
     dict.writeln;
+
+    Cell testDict = new Cell (Cell.Dict);
+    testDict.dict = null;
+    testDict [Cell.from!"symbol" ("toto")] = Cell.from (0);
+
+    assert (testDict [Cell.from!"symbol" ("toto")].integer == 0);
 }
 
 Cell [] parse (string input) {
@@ -828,8 +817,11 @@ Cell [] parse (string input) {
 
 void parseTest () {
     Cell [] tokens = " 1 2 3 ".parse;
-    assert (tokens == map!(Cell.from) ([1L, 2L, 3L]).array);
-
+    
+    foreach (num; [1L, 2L, 3L]) {
+        assert (tokens [num -1].integer == num, 
+                "%s != %s".format (tokens [num].integer, num));
+    }
 }
 
 /// Return the top of the stack.
@@ -893,7 +885,9 @@ class ExecutionStack {
             cursor = 0;
             return this;
         }
-        stack = array ~ stack [cursor .. $];
+        "    ExecutionStack.insert [%s] ~ %s ~ %s"
+            .writefln ([front], array, stack [ cursor +1 .. $]);
+        stack = [front] ~ array ~ stack [ ++ cursor .. $];
         cursor = 0;
         //"    ExecutionStack.insert: %s".writefln (stack);
         return this;
@@ -976,20 +970,51 @@ void numberFun (void delegate (long) integerOp,
 void numBinaryOp (alias binOp) (Stacky stacky) {
     numberOp!(
         (long a, long b) {
-            Cell result = {
-                kind: Cell.Integer,
-                integer: binOp (a, b)
-            };
+            Cell result    = new Cell (Cell.Integer);
+            result.integer = binOp (a, b);
             stacky.push (result);
         }, 
         (double a, double b) {
-            Cell result = {
-                kind: Cell.Floating,
-                floating: binOp (a, b)
-            };
+            Cell result     = new Cell (Cell.Floating);
+            result.floating = binOp (a, b);
             stacky.push (result);
         }) (stacky);
 }
+        
+void cellBinOp (void delegate (Cell a, Cell b) op) (Stacky stacky) 
+{
+    if (stacky.operands.length < 2) {
+        throw new StackUnderflow ("cellBinOp: not enough arguments.");
+    }
+    Cell b  = stacky.top;
+    Cell a  = stacky.index (2);
+
+    stacky.pop ();
+    stacky.pop ();
+
+    op (a, b);
+}
+
+void boolBinOp (void delegate (Cell a, Cell b) op) (Stacky stacky) {
+    if (stacky.operands.length < 2) {
+        throw new StackUnderflow ("and: expected 2 arguments.");
+    }
+    Cell b = stacky.index (1);
+    Cell a = stacky.index (2);
+
+    if (a.kind != Cell.Bool
+    &&  b.kind != Cell.Bool) {
+        throw new InvalidCellKind (
+            "Expected 2 booleans got: %s and %s"
+            .format (a.kindStr, b.kindStr));
+    }
+
+    stacky.pop ();
+    stacky.pop ();
+
+    op (a, b);
+};
+
 
 /** The Stacky interpreter.
  */
@@ -1029,7 +1054,7 @@ class Stacky {
     void push (Cell cell) {
         operands ~= cell;
         ip ++;
-        //`push "%s", ip == %d => %s`.writefln (cell, ip, operands);
+        `push "%s", ip == %d => %s`.writefln (cell, ip, operands);
     }
 
 
@@ -1049,7 +1074,7 @@ class Stacky {
                 =  operands [0     .. ip]
                 ~  operands [ip +1 .. $];
         }
-        //`pop "%s": after %s`.writefln (cell, operands);
+        `pop "%s": after %s`.writefln (cell, operands);
         -- ip;
     };
 
@@ -1058,10 +1083,9 @@ class Stacky {
         dicts ~= builtinWords ();
 
         // A new dictionary on top of the builtins for user defined words.
-        Cell userDict = {
-            kind: Cell.Dict, 
-            dict: null
-        };
+        Cell userDict = new Cell (Cell.Dict);
+        userDict.dict = null;
+
         dicts ~= userDict;
         execution = new ExecutionStack;
     }
@@ -1255,10 +1279,8 @@ class Stacky {
 
         /// Create an array on the stack.
         procs [")"] = (Stacky stacky) {
-            Cell tokens = {
-                kind: Cell.Array,
-                array: []
-            };
+            Cell tokens  = new Cell (Cell.Array);
+            tokens.array = [];
             
             size_t index = 0; 
             bool found   = false;
@@ -1321,10 +1343,8 @@ class Stacky {
             // Remove the openning '['.
             stacky.pop ();
             
-            Cell dict = {
-                kind: Cell.Dict,
-                dict: null
-            };
+            Cell dict = new Cell (Cell.Dict);
+            dict.dict = null;
             
             for (size_t i = 0; i < tokens.length; ++ i) {
                 Cell key = tokens [i ++]; 
@@ -1338,16 +1358,21 @@ class Stacky {
         /// Creates a procedure.
         procs ["{"] = (Stacky stacky) {
             Cell [] code;
-            bool balanced = false;
+            int level = 1;
             
             stacky.execution.popFront;
 
             foreach (token; stacky.execution) {
-                if (token.kind   == Cell.Symbol
-                &&  token.symbol == "}") 
+                if (token.kind == Cell.Symbol && token.symbol == "{") {
+                    level ++;
+                }
+                if (token.kind == Cell.Symbol && token.symbol == "}") 
                 {
-                    balanced = true;
-                    break;
+                    level --;
+                    
+                    if (level == 0) {
+                        break;
+                    }
                 }
 
                 code ~= token;
@@ -1377,6 +1402,42 @@ class Stacky {
             stacky.dicts.top [name] = obj;
         };
 
+        procs ["not"] = (Stacky stacky) {
+            if (stacky.operands.length < 1) {
+                throw new StackUnderflow ("not: not enough arguments.");
+            }
+            Cell obj   = stacky.top;
+
+            if (obj.kind != Cell.Bool) {
+                throw new InvalidCellKind (
+                    "Argument is not a boolean: %s"
+                    .format (obj));
+            }
+            stacky.pop ();
+            stacky.push (Cell.from (! obj.boolean));
+        };
+
+        procs ["="] = (Stacky stacky) {
+            cellBinOp!((a, b) => stacky.push (Cell.fromBool (a == b))) (stacky);
+        };
+        
+        procs ["cmp"] = (Stacky stacky) {
+            cellBinOp!((a, b) => stacky.push (Cell.from (a.opCmp (b)))) (stacky);
+        };
+        
+        procs ["<"] = (Stacky stacky) {
+            cellBinOp!((a, b) => stacky.push (Cell.fromBool (a < b))) (stacky);
+        };
+        procs ["<="] = (Stacky stacky) {
+            cellBinOp!((a, b) => stacky.push (Cell.fromBool (a <= b))) (stacky);
+        };
+        
+        procs [">"] = (Stacky stacky) {
+            cellBinOp!((a, b) => stacky.push (Cell.fromBool (a > b))) (stacky);
+        };
+        procs [">="] = (Stacky stacky) {
+            cellBinOp!((a, b) => stacky.push (Cell.fromBool (a >= b))) (stacky);
+        };
         
         procs ["+"] = (Stacky stacky) {
             numBinaryOp!((a, b) => a + b) (stacky);
@@ -1430,6 +1491,22 @@ class Stacky {
                     "Not a number (%s): %s"
                     .format (num.kindStr, num));
             }
+        };
+
+        procs ["and"] = (Stacky stacky) {
+            boolBinOp!((a, b) {
+                    stacky.push (Cell.fromBool (a.boolean && b.boolean));
+            }) (stacky);
+        };
+        procs ["or"] = (Stacky stacky) {
+            boolBinOp!((a, b) {
+                    stacky.push (Cell.fromBool (a.boolean || b.boolean));
+            }) (stacky);
+        };
+        procs ["xor"] = (Stacky stacky) {
+            boolBinOp!((a, b) {
+                    stacky.push (Cell.fromBool (a.boolean ^ b.boolean));
+            }) (stacky);
         };
 
         procs ["abs"] = (Stacky stacky) {
@@ -1604,13 +1681,23 @@ class Stacky {
             Cell index = stacky.index (1);
             Cell cell  = stacky.index (2);
 
-            if (cell.kind == Cell.Array || cell.kind == Cell.Dict) {
+            if (cell.kind == Cell.Array 
+            ||  cell.kind == Cell.Dict) {
                 stacky.pop ();
                 stacky.pop ();
                 stacky.push (cell [index]);
             }
+            else if (cell.kind == Cell.String) {
+                if (index.kind != Cell.Integer) {
+                    throw new InvalidCellKind (
+                            "get: index is not an integer.");
+                }
+                stacky.pop ();
+                stacky.pop ();
+                stacky.push (Cell.from ("" ~ cell.text [index.integer]));
+            }
             else {
-                throw new InvalidCellKind ("length: object has no length.");
+                throw new InvalidCellKind ("get: object has no length.");
             }
         };
 
@@ -1675,29 +1762,61 @@ class Stacky {
             }
         };
 
+        procs ["array"] = (Stacky stacky) {
+            Cell array  = new Cell (Cell.Array);
+            array.array = [];
+            stacky.push (array);
+        };
+        procs ["dict"] = (Stacky stacky) {
+            Cell dict = new Cell (Cell.Dict);
+            dict.dict = null;
+            stacky.push (dict);
+        };
+
         procs ["for-all"] = (Stacky stacky) {
             if (operands.length < 2) {
                 throw new StackUnderflow ("for-all: not enough arguments.");
             }
             
-            Cell array = stacky.index (2);
-            Cell proc  = stacky.index (1);
+            Cell cont = stacky.index (2);
+            Cell proc = stacky.index (1);
 
-            if (array.kind != Cell.Array) {
-                throw new InvalidCellKind ("for-all: not an Array.");
+            if (cont.kind != Cell.Array
+            &&  cont.kind != Cell.Dict
+            &&  cont.kind != Cell.String) 
+            {
+                throw new InvalidCellKind (
+                    "for-all: not iterable: %s" .format (cont));
             }
             
             if (proc.kind != Cell.Proc) {
-                throw new InvalidCellKind ("for-all: not a Proc.");
+                throw new InvalidCellKind (
+                    "for-all: not a Proc: %s.".format (proc));
             }
 
             stacky.pop ();
             stacky.pop ();
             stacky.execution.popFront;
-
-            foreach (cell; array.array) {
-                stacky.push (cell);
-                proc.eval (stacky);    
+            stacky.execution.popFront;
+            
+            if (cont.kind == Cell.Array) {
+                foreach (cell; cont.array) {
+                    stacky.push (cell);
+                    proc.eval (stacky);    
+                }
+            }
+            else if (cont.kind == Cell.Dict) {
+                foreach (sha1, pair; cont.dict) {
+                    stacky.push (pair [0]); 
+                    stacky.push (pair [1]);
+                    proc.eval (stacky);
+                }
+            }
+            else if (cont.kind == Cell.Dict) {
+                foreach (c; cont.text) {
+                    stacky.push (Cell.from ("" ~ c));
+                    proc.eval (stacky);
+                }
             }
 
             // execution.popFront will be called twice:
@@ -1801,14 +1920,18 @@ class Stacky {
         
         //"eval %s".writefln (tokens);
         execution.insert (tokens);
-        //"execution: %s|%s".writefln (execution.dup, execution.dup.cursor);
+        "execution: %s|%s".writefln (
+                execution.stack.dup [execution.cursor .. $], 
+                execution.dup.cursor);
 
         foreach (token; execution) {
-            //"%s".writefln ('-'.repeat (50));
-            //operands [0.. ip].writeln;
-            //"%s".writefln ('-'.repeat (50));
+            "%s".writefln ('-'.repeat (50));
+            operands [0.. ip].writeln;
+            "%s".writefln ('-'.repeat (50));
+            "%s| %s".writefln (execution.cursor, execution.dup);
+            "%s".writefln ('.'.repeat (50));
             push (token);
-            //`eval "%s" %s `.writefln (token, operands);
+            `eval "%s"`.writefln (token);
 
             switch (token.kind) {
                 case Cell.Integer: 
@@ -1843,6 +1966,7 @@ class Stacky {
         &&  op.symbol.length > 1)
         {
             op.symbol = op.symbol [1..$];
+            "/ symbol: %s".writefln (op);
             return;
         }
 
@@ -1876,6 +2000,7 @@ class Stacky {
                 match.proc.native (this);
 
             } else if (match.proc.kind == Procedure.Words) {
+                "evalSymbol Code: %s".writefln (match.proc.code.array);
                 execution.insert (match.proc.code.array);
             }
         } else {
@@ -1892,27 +2017,51 @@ void stackyTest () {
     //stacky.push (Cell.from (1));
     //stacky.push (Cell.from (2));
     
-    stacky.eval ("1 2 3 print-stack");
-    stacky.eval ("dup print-stack");
-    stacky.eval ("drop swap print-stack");
-    stacky.eval ("2 copy print-stack");
-    stacky.eval ("3 rolln print-stack");
-    stacky.eval (`mark "hello" "world" count-to-mark print-stack`);
-    stacky.eval (`clear-to-mark print-stack`);
-    stacky.eval (`( 1 2 3 ) print-stack`);
-    stacky.eval (`[ "hello" "world" ] print-stack`);
-    stacky.eval (`{ dup dup } print-stack`);
-    stacky.eval (`clear-stack`);
-    stacky.eval (`/2dup { dup dup } def print-stack`);
-    stacky.eval (`1 2 2dup print-stack`);
-    stacky.eval (`clear-stack`);
-    stacky.eval (`1 2 stack-length print-stack`);
-    stacky.eval (`+ print-stack`);
-    stacky.eval (`* print-stack`);
-    stacky.eval (`clear-stack`);
-    stacky.eval (`( 1 2 3 ) { 2 + } for-all print-stack print-stack`);
+    //stacky.eval ("1 2 3 print-stack");
+    //stacky.eval ("dup print-stack");
+    //stacky.eval ("drop swap print-stack");
+    //stacky.eval ("2 copy print-stack");
+    //stacky.eval ("3 rolln print-stack");
+    //stacky.eval (`mark "hello" "world" count-to-mark print-stack`);
+    //stacky.eval (`clear-to-mark print-stack`);
+    //stacky.eval (`( 1 2 3 ) print-stack`);
+    //stacky.eval (`[ "hello" "world" ] print-stack`);
+    //stacky.eval (`{ dup dup } print-stack`);
+    //stacky.eval (`clear-stack`);
+    //stacky.eval (`/2dup { dup dup } def print-stack`);
+    //stacky.eval (`1 2 2dup print-stack`);
+    //stacky.eval (`clear-stack`);
+    //stacky.eval (`1 2 stack-length print-stack`);
+    //stacky.eval (`+ print-stack`);
+    //stacky.eval (`* print-stack`);
+    //stacky.eval (`clear-stack`);
+    //stacky.eval (`( 1 2 3 ) { 2 + } for-all print-stack print-stack`);
     stacky.eval (`true { 2 } if print-stack`);
     stacky.eval (`false { 1 } { 2 } ifelse print-stack`);
+    stacky.eval (`clear-stack`);
+    stacky.eval (`2 2 + 4 =`);
+    stacky.eval (`clear-stack`);
+    stacky.eval (`( 0 1 2 3 ) 1 get`);
+    stacky.eval (`clear-stack`);
+    stacky.eval (`"hello" 1 get`);
+    stacky.eval (`
+        clear-stack
+
+        /all { 
+            /proc   swap def 
+            /array  swap def
+            /status true def
+            
+            array { 
+                proc true = not { 
+                    /status false def 
+                } if 
+            } for-all
+            
+            status
+        } def 
+    `);
+    stacky.eval (` ( 1 2 3 ) { 5 < } all `);
 
     "%s".writefln ('*'.repeat (30));
     stacky.operands.writeln;
