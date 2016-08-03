@@ -142,7 +142,13 @@ class Procedure {
       Compare pointers for native procedures.
       Compare arrays of code for words procedures.
      */
-    bool opEquals (ref const Procedure proc) const {
+    override bool opEquals (Object obj) {
+        Procedure proc = cast (Procedure) obj;
+        
+        if (proc is null) {
+            return false;
+        }
+
         if (kind != proc.kind) {
             return false;
         }
@@ -167,7 +173,13 @@ class Procedure {
     }
 
     /// Comparison operator between two procedures.
-    int opCmp (ref const Procedure proc) const {
+    override int opCmp (Object obj) {
+        Procedure proc = cast (Procedure) obj;
+        
+        if (proc is null) {
+            return -1;
+        }
+
         if (kind == Words && proc.kind == Native) {
             return 1;
         }
@@ -470,7 +482,13 @@ class Cell {
     }
 
     /// Equality operator.
-    bool opEquals (ref const Cell cell) const {
+    override bool opEquals (Object obj) {
+        Cell cell = cast (Cell) obj;
+        
+        if (cell is null) {
+            return false;
+        }
+        
         if (kind == Integer || kind == Floating) {
             switch (kind) {
                 case Integer:
@@ -543,7 +561,13 @@ class Cell {
     }
     
     /// Comparison operator.
-    int opCmp (ref const Cell cell) const {
+    override int opCmp (Object obj) {
+        Cell cell = cast (Cell) obj;
+        
+        if (cell is null) {
+            return -1;
+        }
+
         if (kind == Integer || kind == Floating) {
             switch (kind) {
                 case Integer:
@@ -820,10 +844,7 @@ Cell [] parse (string input) {
 void parseTest () {
     Cell [] tokens = " 1 2 3 ".parse;
     
-    foreach (num; [1L, 2L, 3L]) {
-        assert (tokens [num -1].integer == num, 
-                "%s != %s".format (tokens [num].integer, num));
-    }
+    assert (tokens == map!(Cell.from) ([1L, 2L, 3L]).array); 
 }
 
 /// Return the top of the stack.
@@ -2025,52 +2046,97 @@ void stackyTest () {
     stacky.push (Cell.from (2));
 
     assert (stacky.operands == [Cell.from (1), Cell.from (2)]);
-    
-    //stacky.eval ("1 2 3 print-stack");
-    //stacky.eval ("dup print-stack");
-    //stacky.eval ("drop swap print-stack");
-    //stacky.eval ("2 copy print-stack");
-    //stacky.eval ("3 rolln print-stack");
-    //stacky.eval (`mark "hello" "world" count-to-mark print-stack`);
-    //stacky.eval (`clear-to-mark print-stack`);
-    //stacky.eval (`( 1 2 3 ) print-stack`);
-    //stacky.eval (`[ "hello" "world" ] print-stack`);
-    //stacky.eval (`{ dup dup } print-stack`);
-    //stacky.eval (`clear-stack`);
-    //stacky.eval (`/2dup { dup dup } def print-stack`);
-    //stacky.eval (`1 2 2dup print-stack`);
-    //stacky.eval (`clear-stack`);
-    //stacky.eval (`1 2 stack-length print-stack`);
-    //stacky.eval (`+ print-stack`);
-    //stacky.eval (`* print-stack`);
-    //stacky.eval (`clear-stack`);
-    //stacky.eval (`( 1 2 3 ) { 2 + } for-all print-stack print-stack`);
-    //stacky.eval (`true { 2 } if print-stack`);
-    //stacky.eval (`false { 1 } { 2 } ifelse print-stack`);
-    //stacky.eval (`clear-stack`);
-    //stacky.eval (`2 2 + 4 =`);
-    //stacky.eval (`clear-stack`);
-    //stacky.eval (`( 0 1 2 3 ) 1 get`);
-    //stacky.eval (`clear-stack`);
-    //stacky.eval (`"hello" 1 get`);
-    //stacky.eval (`
-    //    clear-stack
 
-    //    /all { 
-    //        /proc   swap def 
-    //        /array  swap def
-    //        /status true def
-    //        
-    //        array { 
-    //            proc true = not { 
-    //                /status false def 
-    //            } if 
-    //        } for-all
-    //        
-    //        status
-    //    } def 
-    //`);
-    //stacky.eval (` ( 1 2 3 ) { 5 < } all `);
+    stacky.eval (`clear-stack`);
+    assert (stacky.operands == []);
+    
+    stacky.eval ("1 2 3");
+    assert (stacky.operands == map!(Cell.from) ([1L, 2L, 3L]).array);
+
+    stacky.eval (`clear-stack 1 dup`);
+    assert (stacky.operands == [Cell.from (1), Cell.from (1)]);
+
+    stacky.eval (`clear-stack 1 2 3 drop swap`);
+    assert (stacky.operands == [Cell.from (2), Cell.from (1)]);
+
+    stacky.eval (`clear-stack 1 2 3 2 copy`);
+    assert (stacky.operands 
+            == map!(Cell.from) ([1, 2, 3, 2, 3]).array);
+
+    //stacky.eval (`clear-stack 1 2 3 2 rolln`);
+    //assert (stacky.operands 
+    //        == map!(Cell.from) ([2, 3, 1]).array);
+    //stacky.eval ("3 rolln print-stack");
+
+    stacky.eval (`clear-stack mark "hello" "world" count-to-mark`);
+    assert (stacky.top == Cell.from (2));
+    
+    stacky.eval (`clear-to-mark`);
+    assert (stacky.operands == []);
+
+    stacky.eval (`clear-stack ( 1 2 3 )`);
+    assert (stacky.top == Cell.from ([1L, 2L, 3L]));
+
+    stacky.eval (`clear-stack [ "hello" "world" ]`);
+    assert (stacky.top == Cell.from (["hello": "world"]));
+
+    stacky.eval (`clear-stack { dup dup }`);
+    assert (stacky.top.kind == Cell.Proc);
+    assert (stacky.top.proc.code 
+            == map!(Cell.fromSymbol) (["dup", "dup"]).array);
+
+    assert (stacky.dicts.top.dict.keys.empty);
+    stacky.eval (`clear-stack /2dup { dup dup } def print-stack`);
+    assert (! stacky.dicts.top.dict.keys.empty);
+
+    stacky.eval (`clear-stack 1 2 2dup`);
+    assert (stacky.operands
+            == map!(Cell.from) ([1, 2, 2, 2]).array);
+
+    stacky.eval (`clear-stack 1 2 stack-length`);
+    assert (stacky.operands.top == Cell.from (2));
+
+    stacky.eval (`clear-stack 1 2 + 3 =`);
+    assert (stacky.operands.top == Cell.fromBool (true));
+
+    //stacky.eval (`clear-stack 3.0 4 * 12.0 = `);
+    //assert (stacky.operands.top == Cell.fromBool (true));
+
+    stacky.eval (`clear-stack ( 1 2 3 ) { 2 + } for-all`);
+    assert (stacky.operands
+            == map!(Cell.from) ([3, 4, 5]).array);
+
+    stacky.eval (`clear-stack true { "toto" } if`);
+    assert (stacky.operands.top == Cell.from ("toto"));
+
+    stacky.eval (`clear-stack false { "yep" } { "nope" } ifelse`);
+    assert (stacky.operands.top == Cell.from ("nope"));
+
+    stacky.eval (`clear-stack ( 0 1 2 3 ) 1 get`);
+    assert (stacky.operands.top == Cell.from (1));
+
+    stacky.eval (`clear-stack "hello" 1 get`);
+    assert (stacky.operands.top == Cell.from ("e"));
+
+    stacky.eval (`
+        clear-stack
+
+        /all { 
+            /proc   swap def 
+            /array  swap def
+            /status true def
+            
+            array { 
+                proc true = not { 
+                    /status false def 
+                } if 
+            } for-all
+            
+            status
+        } def 
+    `);
+    stacky.eval (` ( 1 2 3 ) { 5 < } all `);
+    assert (stacky.operands.top == Cell.fromBool (true));
 
     "%s".writefln ('*'.repeat (30));
     stacky.operands.writeln;
