@@ -100,11 +100,16 @@ class Procedure {
     /// Tag to differentiate the union.
     int        kind;
 
-    /// Code made of Words
-    Cell []    code;
+    union {
+        /// Code made of Words
+        Cell []    code;
 
-    /// Native code.
-    NativeType native; 
+        /// Native code.
+        NativeType native; 
+    }
+
+    /// The procedure name, if given.
+    string name = "";
 
     this (int kind, Cell [] code) {
         this.kind = kind;
@@ -865,25 +870,24 @@ Cell index (Cell [] stack, size_t n) {
     return stack [$ -1 -n];
 }
 
-
-/// An Input Range over a stack of arrays of cells.
-class ExecutionStack {
+class CellStack {
     /// Keeps track of the iteration.
     size_t cursor = 0;
+    string procName = ""; 
 
     /// The cells to be executed.
     Cell [] stack;
-
+    
     /// Create a new task. May pass a cursor.
-    this (Cell [] stackIn = [], size_t cursor = 0) {
-        this.stack  = stackIn;
-        this.cursor = cursor;
-
+    this (Cell [] stackIn = [], size_t cursor = 0, string procName = "") {
+        this.stack    = stackIn;
+        this.cursor   = cursor;
+        this.procName = procName;
     }
 
     /// Duplicate this object.
-    ExecutionStack dup () {
-        return new ExecutionStack (stack.dup, cursor);
+    CellStack dup () {
+        return new CellStack (stack.dup, cursor);
     }
 
     /// Is this stack empty?
@@ -893,8 +897,6 @@ class ExecutionStack {
 
     /// The front of the stack: next element to iterate.
     Cell front () {
-        //"    ExecutionStack.front: %s".writefln (stack [min (cursor, $-1)]);
-        
         /* Return the token and also increase the cursor. */
         return stack [min (cursor ++, $-1)];
     }
@@ -906,19 +908,99 @@ class ExecutionStack {
          */
     }
 
-    /// Insert the given array for execution.
-    ExecutionStack insert (Cell [] array) {
-        if (empty) {
-            stack  = array;
-            cursor = 0;
-            return this;
+    override string toString () {
+        return stack [min (cursor, $ -1)].to!string;
+    }
+}
+
+/// An Input Range over a stack of arrays of cells.
+class ExecutionStack {
+    /// The cells to be executed.
+    CellStack [] stack;
+
+    /// Create a new task. May pass a cursor.
+    this (CellStack [] stackIn = []) {
+        this.stack  = stackIn;
+    }
+
+    /// Duplicate this object.
+    ExecutionStack dup () {
+        auto clone = new ExecutionStack; 
+        
+        for (size_t i = 0; i < stack.length; ++ i) {
+            clone.stack ~= stack [i].dup;
         }
-        "    ExecutionStack.insert %s ~ %s"
-            .writefln (array, stack [ cursor .. $]);
-        stack = array ~ stack [cursor .. $];
-        cursor = 0;
-        //"    ExecutionStack.insert: %s".writefln (stack);
+        return clone;
+    }
+
+    override string toString () {
+        string [] res = []; 
+        
+        for (size_t i = 0; i < stack.length; ++ i) {
+            res ~= "[" ~ stack [i].toString () ~ "]";
+        }
+        return res.join (", ");
+    }
+
+    /// Is this stack empty?
+    bool empty () {
+        if (stack.empty) {
+            return true;
+        }
+        if (stack.length == 1) {
+            return stack.back.empty;
+        }
+        if (stack.length >= 2) {
+            for (size_t i = stack.length -1; i >= 0; -- i) {
+                if (! stack [i].empty) {
+                    return false;
+                }
+            }
+            "    exe.empty: all stacks empty.".writeln;
+            return true;
+        }
+        return false;
+    }
+
+    /// The front of the stack: next element to iterate.
+    Cell front () {
+        /* Return the token and also increase the cursor. */
+        Cell value = stack.back.front;
+        
+        if (stack.back.empty) {
+            stack.popBack;
+        }
+        return value;
+    }
+
+    /// Move on to the next element.
+    void popFront () {
+        /** Actually don't do anything here:
+          once we gave a token, it's over, we move on to the next immediately.
+         */
+    }
+
+    /// Insert the given array for execution.
+    ExecutionStack insert (Cell [] array, string procName = "") {
+        stack ~= new CellStack (array, 0, procName);
         return this;
+    }
+
+    void return_ () {
+        size_t index;
+        string procName = "";
+
+        for (index = 0; index < stack.length; ++ index) {
+            if (stack [index].procName != "") {
+                break;
+            }
+        }
+
+        if (procName == "") {
+            return;
+        }
+
+        stack = stack [0 .. index];
     }
 }
 
@@ -1434,6 +1516,10 @@ class Stacky {
                 key = name;
             }
 
+            if (obj.kind == Cell.Proc) {
+                obj.proc.name = key.symbol;
+            }
+
             stacky.dicts.top [key] = obj;
         };
 
@@ -1738,7 +1824,7 @@ class Stacky {
 
         procs ["put"] = (Stacky stacky) {
             if (operands.length < 3) {
-                throw new StackUnderflow ("get: not enough arguments.");
+                throw new StackUnderflow ("put: not enough arguments.");
             }
 
             Cell value = stacky.index (1);
@@ -1752,7 +1838,28 @@ class Stacky {
                 cell [index] = value;
             }
             else {
-                throw new InvalidCellKind ("length: object has no length.");
+                throw new InvalidCellKind ("put: object has no length.");
+            }
+        };
+        
+        procs ["push"] = (Stacky stacky) {
+            if (operands.length < 2) {
+                throw new StackUnderflow (
+                    "push: not enough arguments: needs 2.");
+            }
+
+            Cell array = stacky.index (1);
+            Cell value = stacky.index (2);
+
+            if (array.kind == Cell.Array) {
+                stacky.pop ();
+                stacky.pop ();
+                array.array ~= value;
+            }
+            else {
+                throw new InvalidCellKind (
+                    "push: Not an array (%s): %s."
+                    .format (array.kindStr, array));
             }
         };
 
@@ -1797,6 +1904,26 @@ class Stacky {
             }
         };
 
+        procs ["begin"] = (Stacky stacky) {
+            if (operands.length < 1) {
+                throw new StackUnderflow (
+                    "begin: not enough arguments; needs one.");
+            }
+
+            Cell dict = stacky.operands.top;
+            stacky.pop ();
+            stacky.dicts ~= dict;
+        };
+        
+        procs ["end"] = (Stacky stacky) {
+            if (stacky.dicts.length <= 2) {
+                /** keep the builtin and user dictionaries*/
+                return;
+            }
+
+            stacky.dicts.popBack ();
+        };
+
         procs ["array"] = (Stacky stacky) {
             Cell array  = new Cell (Cell.Array);
             array.array = [];
@@ -1807,6 +1934,9 @@ class Stacky {
             dict.dict = null;
             stacky.push (dict);
         };
+
+        procs ["()"] = procs ["array"];
+        procs ["[]"] = procs ["dict"];
 
         procs ["for-all"] = (Stacky stacky) {
             if (operands.length < 2) {
@@ -1911,6 +2041,13 @@ class Stacky {
             }
         };
 
+        procs ["if-else"] = procs ["ifelse"];
+
+        procs ["return"] = (Stacky stacky) {
+            stacky.execution.return_ ();
+
+        };
+
         return Cell.from!("symbol", string, Procedure.NativeType) (procs);
     }
 
@@ -1949,16 +2086,14 @@ class Stacky {
         
         //"eval %s".writefln (tokens);
         execution.insert (tokens);
-        "execution: %s|%s".writefln (
-                execution.stack.dup [execution.cursor .. $], 
-                execution.dup.cursor);
+        "execution: %s".writefln (execution.toString);
 
         foreach (token; execution) {
             "%s".writefln ('-'.repeat (50));
             operands [0.. ip].writeln;
             "%s".writefln ('-'.repeat (50));
-            "%s| %s".writefln (execution.cursor, execution.dup);
-            "%s".writefln ('.'.repeat (50));
+            "execution: %s".writefln (execution.toString);
+            //"%s".writefln ('.'.repeat (50));
             push (token);
             `eval "%s"`.writefln (token);
 
@@ -2030,8 +2165,8 @@ class Stacky {
                 match.proc.native (this);
 
             } else if (match.proc.kind == Procedure.Words) {
-                "evalSymbol Code: %s".writefln (match.proc.code.array);
-                execution.insert (match.proc.code.array);
+                execution.insert (match.proc.code.array, 
+                                  match.proc.name);
             }
         } else {
             push (*match);
@@ -2124,6 +2259,7 @@ void stackyTest () {
         clear-stack
 
         /all { 
+            [] begin 
             /proc   swap def 
             /array  swap def
             /status true def
@@ -2135,9 +2271,76 @@ void stackyTest () {
             } for-all
             
             status
+            end
         } def 
     `);
     stacky.eval (` ( 1 2 3 ) { 5 < } all `);
+    assert (stacky.operands.top == Cell.fromBool (true));
+    
+    stacky.eval (`
+        clear-stack
+
+        /any { 
+            [] begin 
+            /proc   swap def 
+            /array  swap def
+            
+            array { 
+                proc true = { 
+                    true 
+                    return
+                } if 
+            } for-all
+            
+            end
+        } def 
+
+        ( 1 2 3 ) { 5 < } any
+    `);
+    assert (stacky.operands.top == Cell.fromBool (true));
+
+    stacky.eval (`
+        clear-stack
+
+        /map {
+            [] begin
+            /proc   swap  def
+            /source swap  def
+            /target  ()   def 
+
+            source { proc target push } for-all
+
+            target
+            end
+        } def
+    `);
+    stacky.eval (` 
+        ( 1 2 3 ) { 2 * } map 
+        ( 2 4 6 ) = 
+    `);
+    assert (stacky.operands.top == Cell.fromBool (true));
+
+    stacky.eval (`
+        clear-stack
+
+        /filter {
+            [] begin
+            /proc   swap def
+            /source swap def 
+            /target  ()  def
+
+            source {
+                dup proc true =
+                { target push } { drop } if-else
+            } for-all
+            
+            target
+            end
+        } def
+
+        ( 1 9 3 10 4 16 ) { 5 > } filter
+        ( 9 10 16 ) =
+    `);
     assert (stacky.operands.top == Cell.fromBool (true));
 
     "%s".writefln ('*'.repeat (30));
