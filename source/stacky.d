@@ -462,7 +462,17 @@ class Cell {
             case String:
                 return "\"" ~ text ~ "\"";
             case Symbol:
-                return symbol;
+                if (symbol.startsWith ("/")
+                &&  symbol.length > 1) {
+                    return symbol [1..$];
+                } 
+                else if (symbol.startsWith ("//")
+                &&      symbol.length > 2) {
+                    return symbol [2..$];
+                } 
+                else {
+                    return symbol;
+                }
             case Bool:
                 return boolean ? "true" : "false";
             case Array:
@@ -1523,6 +1533,7 @@ class Stacky {
             stacky.dicts.top [key] = obj;
         };
 
+        /// Boolean negation.
         procs ["not"] = (Stacky stacky) {
             if (stacky.operands.length < 1) {
                 throw new StackUnderflow ("not: not enough arguments.");
@@ -1538,6 +1549,7 @@ class Stacky {
             stacky.push (Cell.from (! obj.boolean));
         };
 
+        /// Comparison operators.
         procs ["="] = (Stacky stacky) {
             cellBinOp!((a, b) => stacky.push (Cell.fromBool (a == b))) (stacky);
         };
@@ -1560,6 +1572,7 @@ class Stacky {
             cellBinOp!((a, b) => stacky.push (Cell.fromBool (a >= b))) (stacky);
         };
         
+        /// Arithmetic and maths operators.
         procs ["+"] = (Stacky stacky) {
             numBinaryOp!((a, b) => a + b) (stacky);
         };
@@ -1614,21 +1627,6 @@ class Stacky {
             }
         };
 
-        procs ["and"] = (Stacky stacky) {
-            boolBinOp!((a, b) {
-                    stacky.push (Cell.fromBool (a.boolean && b.boolean));
-            }) (stacky);
-        };
-        procs ["or"] = (Stacky stacky) {
-            boolBinOp!((a, b) {
-                    stacky.push (Cell.fromBool (a.boolean || b.boolean));
-            }) (stacky);
-        };
-        procs ["xor"] = (Stacky stacky) {
-            boolBinOp!((a, b) {
-                    stacky.push (Cell.fromBool (a.boolean ^ b.boolean));
-            }) (stacky);
-        };
 
         procs ["abs"] = (Stacky stacky) {
             numberFun!(
@@ -1737,17 +1735,6 @@ class Stacky {
                 }) (stacky);
         };
         
-        procs ["cos"] = (Stacky stacky) {
-            numberFun!(
-                (long num) {
-                    stacky.push (
-                        Cell.from (round (cos (num.to!double).to!long)));
-                },
-                (double num) {
-                    stacky.push (Cell.from (cos (num)));
-
-                }) (stacky);
-        };
         
         procs ["cos"] = (Stacky stacky) {
             numberFun!(
@@ -1772,8 +1759,26 @@ class Stacky {
 
                 }) (stacky);
         };
+        
+        /// Boolean logic.
+        procs ["and"] = (Stacky stacky) {
+            boolBinOp!((a, b) {
+                    stacky.push (Cell.fromBool (a.boolean && b.boolean));
+            }) (stacky);
+        };
+        procs ["or"] = (Stacky stacky) {
+            boolBinOp!((a, b) {
+                    stacky.push (Cell.fromBool (a.boolean || b.boolean));
+            }) (stacky);
+        };
+        procs ["xor"] = (Stacky stacky) {
+            boolBinOp!((a, b) {
+                    stacky.push (Cell.fromBool (a.boolean ^ b.boolean));
+            }) (stacky);
+        };
 
 
+        /// Get the length of an Array or Dict.
         procs ["length"] = (Stacky stacky) {
             if (operands.length < 1) {
                 throw new StackUnderflow ("length: not enough arguments.");
@@ -1794,6 +1799,7 @@ class Stacky {
             }
         };
 
+        /// Get the value at the given index in an Array or Dict.
         procs ["get"] = (Stacky stacky) {
             if (operands.length < 2) {
                 throw new StackUnderflow ("get: not enough arguments.");
@@ -1822,6 +1828,7 @@ class Stacky {
             }
         };
 
+        /// Put a value at an index in an Array or Dict.
         procs ["put"] = (Stacky stacky) {
             if (operands.length < 3) {
                 throw new StackUnderflow ("put: not enough arguments.");
@@ -1842,6 +1849,8 @@ class Stacky {
             }
         };
         
+
+        /// Append a value to the end of an Array.
         procs ["push"] = (Stacky stacky) {
             if (operands.length < 2) {
                 throw new StackUnderflow (
@@ -1863,6 +1872,7 @@ class Stacky {
             }
         };
 
+        /// Store the stack inside an array.
         procs ["a-store"] = (Stacky stacky) {
             if (operands.length < 1) {
                 throw new StackUnderflow ("a-store: not enough arguments.");
@@ -1882,6 +1892,7 @@ class Stacky {
             array.array ~= operands [0.. ip];
         };
         
+        /// Load an array onto the stack.
         procs ["a-load"] = (Stacky stacky) {
             if (operands.length < 1) {
                 throw new StackUnderflow ("a-store: not enough arguments.");
@@ -1904,6 +1915,7 @@ class Stacky {
             }
         };
 
+        /// Push a dictionary on the dictionary stack.
         procs ["begin"] = (Stacky stacky) {
             if (operands.length < 1) {
                 throw new StackUnderflow (
@@ -1915,6 +1927,7 @@ class Stacky {
             stacky.dicts ~= dict;
         };
         
+        /// Pop a dictionary of the dictionary stack.
         procs ["end"] = (Stacky stacky) {
             if (stacky.dicts.length <= 2) {
                 /** keep the builtin and user dictionaries*/
@@ -1924,11 +1937,99 @@ class Stacky {
             stacky.dicts.popBack ();
         };
 
+
+        /// True if a key is contained in a dictionary.
+        procs ["known"] = (Stacky stacky) {
+            if (operands.length < 2) {
+                throw new StackUnderflow ("known: not enough arguments.");
+            }
+            
+            Cell cell = stacky.top ();
+            Cell symb = stacky.index (2);
+
+            if (cell.kind != Cell.Dict) {
+                throw new InvalidCellKind (
+                    "known: expected a Dict, got (%s): %s" 
+                    .format (cell.kindStr, cell));
+            }
+            stacky.pop ();
+            stacky.pop ();
+
+            if (auto found = symb.sha1Hash in cell.dict) {
+                stacky.push (Cell.fromBool (true));
+            
+            } else {
+                stacky.push (Cell.fromBool (false));
+            }
+        };
+        
+        /// Update the topmost dict with a new value for the given key.
+        procs ["store"] = (Stacky stacky) {
+            if (operands.length < 2) {
+                throw new StackUnderflow ("store: not enough arguments.");
+            }
+            
+            Cell value = stacky.top ();
+            Cell key   = stacky.index (2);
+
+            stacky.pop ();
+            stacky.pop ();
+
+            if (auto found = key.sha1Hash in stacky.dicts.back.dict) {
+                (*found) [1] = value;
+            }
+        };
+
+        /// Remove a key from a dictionary.
+        procs ["undef"] = (Stacky stacky) {
+            if (operands.length < 2) {
+                throw new StackUnderflow ("undef: not enough arguments.");
+            }
+            
+            Cell value = stacky.top ();
+            Cell dict  = stacky.index (2);
+
+            if (dict.kind != Cell.Dict) {
+                throw new InvalidCellKind (
+                    "undef: Expected a dict, got (%s): %s"
+                    .format (dict.kindStr, dict));
+            }
+            stacky.pop ();
+            stacky.pop ();
+
+            dict.dict.remove (value.sha1Hash);
+        };
+
+        /// Return the dictionary with our stack where the key is defined.
+        procs ["where"] = (Stacky stacky) {
+            if (operands.length < 1) {
+                throw new StackUnderflow ("where: not enough arguments.");
+            }
+            
+            Cell value = stacky.top ();
+            stacky.pop ();
+            Cell * match;
+
+            foreach_reverse (dict; dicts) {
+                match = dict.lookup (value);
+                
+                if (match) {
+                    stacky.push (dict);
+                    stacky.push (Cell.fromBool (true));
+                    return;
+                }
+            }
+            stacky.push (Cell.fromBool (false));
+        };
+
+        /// Create a new empty array.
         procs ["array"] = (Stacky stacky) {
             Cell array  = new Cell (Cell.Array);
             array.array = [];
             stacky.push (array);
         };
+        
+        /// Create a new empty dict.
         procs ["dict"] = (Stacky stacky) {
             Cell dict = new Cell (Cell.Dict);
             dict.dict = null;
@@ -1938,6 +2039,8 @@ class Stacky {
         procs ["()"] = procs ["array"];
         procs ["[]"] = procs ["dict"];
 
+        /// Apply a procedure to all the element of an array, dict or string.
+        /// For dict, pushes key and value onto the stack for the procedure.
         procs ["for-all"] = (Stacky stacky) {
             if (operands.length < 2) {
                 throw new StackUnderflow ("for-all: not enough arguments.");
@@ -1983,6 +2086,8 @@ class Stacky {
             }
         };
 
+
+        /// Single conditional.
         procs ["if"] = (Stacky stacky) {
             if (operands.length < 2) {
                 throw new StackUnderflow ("if: not enough arguments.");
@@ -2008,6 +2113,7 @@ class Stacky {
             }
         };
         
+        /// Conditional with alternative.
         procs ["ifelse"] = (Stacky stacky) {
             if (operands.length < 3) {
                 throw new StackUnderflow ("if: not enough arguments.");
@@ -2043,9 +2149,150 @@ class Stacky {
 
         procs ["if-else"] = procs ["ifelse"];
 
+        /// Return from a named procedure.
         procs ["return"] = (Stacky stacky) {
             stacky.execution.return_ ();
+        };
 
+        procs ["for"] = (Stacky stacky) {
+            if (operands.length < 4) {
+                throw new StackUnderflow ("for: not enough arguments.");
+            }
+
+            Cell proc   = stacky.index (1);
+            Cell limit  = stacky.index (2);
+            Cell incr   = stacky.index (3);
+            Cell start  = stacky.index (4);
+
+            if (proc.kind != Cell.Proc) {
+                throw new InvalidCellKind (
+                    "for, proc: not a Proc: %s.".format (proc));
+            }
+            if (limit.kind != Cell.Integer) {
+                throw new InvalidCellKind (
+                    "for, limit: not an Integer: %s.".format (limit));
+            }
+            if (incr.kind != Cell.Integer) {
+                throw new InvalidCellKind (
+                    "for, incr: not an Integer: %s.".format (incr));
+            }
+            if (start.kind != Cell.Integer) {
+                throw new InvalidCellKind (
+                    "for, start: not an Integer: %s.".format (start));
+            }
+
+            stacky.pop ();
+            stacky.pop ();
+            stacky.pop ();
+            stacky.pop ();
+
+            if (start <= limit) {
+                for (size_t i = start.integer
+                    ; i < limit.integer
+                    ; i += incr.integer) 
+                {
+                    stacky.push (Cell.from (i));
+                    proc.eval (stacky);
+                }
+            } else {
+                for (size_t i = start.integer
+                    ; i > limit.integer
+                    ; i -= incr.integer) 
+                {
+                    stacky.push (Cell.from (i));
+                    proc.eval (stacky);
+                }
+            }
+        };
+        
+        procs ["repeat"] = (Stacky stacky) {
+            if (operands.length < 2) {
+                throw new StackUnderflow ("repeat: not enough arguments.");
+            }
+
+            Cell proc   = stacky.index (1);
+            Cell times  = stacky.index (2);
+
+            if (proc.kind != Cell.Proc) {
+                throw new InvalidCellKind (
+                    "repeat, proc: not a Proc: %s.".format (proc));
+            }
+            if (times.kind != Cell.Integer) {
+                throw new InvalidCellKind (
+                    "repeat, times: not an Integer: %s.".format (times));
+            }
+
+            foreach (n; 0 .. times.integer) {
+                proc.eval (stacky);
+            }
+        };
+        
+        procs ["loop"] = (Stacky stacky) {
+            if (operands.length < 1) {
+                throw new StackUnderflow ("loop: not enough arguments.");
+            }
+
+            Cell proc   = stacky.index (1);
+            Cell times  = stacky.index (2);
+
+            if (proc.kind != Cell.Proc) {
+                throw new InvalidCellKind (
+                    "loop, proc: not a Proc: %s.".format (proc));
+            }
+
+            for (;;) {
+                proc.eval (stacky);
+            }
+        };
+
+        procs ["cond"] = (Stacky stacky) {
+            if (operands.length < 1) {
+                throw new StackUnderflow ("cond: not enough arguments.");
+            }
+
+            Cell conds  = stacky.top ();
+            stacky.pop ();
+
+            if (conds.kind != Cell.Array) {
+                throw new InvalidCellKind (
+                    "cond: not an Array: %s.".format (conds));
+            }
+
+            if (conds.array.length % 2 != 0) {
+                throw new InvalidCellKind (
+                    "cond: array length is not a multiple of 2: %s."
+                    .format (conds));
+            }
+            
+            for (size_t i = 0; i < conds.array.length; ++ i) {
+                Cell action  = conds.array [i];
+
+                if (action.kind != Cell.Proc
+                &&  (action.kind == Cell.Symbol && action.symbol != "/else")) {
+                    throw new InvalidCellKind (
+                        "cond: array [%s] is not a Proc nor '/else' %s."
+                        .format (i, action));
+                }
+            }
+
+            for (size_t i = 0; i < conds.array.length; ++ i) {
+                Cell test   = conds.array [i]; 
+                Cell action = conds.array [++ i];
+                
+                if (test.kind == Cell.Symbol && test.symbol == "/else") {
+                    action.eval (stacky);
+                    return;
+                }
+                test.eval (stacky);
+
+                if (operands.length > 0 
+                && stacky.top == Cell.fromBool (true)) {
+                    stacky.pop ();
+                    action.eval (stacky);
+                    return;
+                }
+                stacky.pop ();
+            }
         };
 
         return Cell.from!("symbol", string, Procedure.NativeType) (procs);
@@ -2064,6 +2311,7 @@ class Stacky {
         }
         return match;
     }
+
 
     /** Look up for a symbol in the dictionary stack. The given string is 
       converted to a Cell Symbol.
@@ -2340,6 +2588,54 @@ void stackyTest () {
 
         ( 1 9 3 10 4 16 ) { 5 > } filter
         ( 9 10 16 ) =
+    `);
+    assert (stacky.operands.top == Cell.fromBool (true));
+    
+    stacky.eval (`
+        clear-stack
+
+        10 (
+            { 5 > } {  "> 5" }
+            /else   { "<= 5" }
+        ) cond
+
+        "> 5" =
+    `);
+    assert (stacky.operands.top == Cell.fromBool (true));
+    
+    stacky.eval (`
+        clear-stack
+        "hello" [ "hello" "world" ] known 
+    `);
+    assert (stacky.operands.top == Cell.fromBool (true));
+    
+    stacky.eval (`
+        clear-stack
+        [ /hello "world" ] begin
+            /hello "tomato" store
+            hello "tomato" =
+        end
+    `);
+    assert (stacky.operands.top == Cell.fromBool (true));
+    
+    stacky.eval (`
+        clear-stack
+
+        [] begin
+            /dict [ /hello "world" ] def
+            dict /hello undef
+            dict [] = 
+        end
+    `);
+    assert (stacky.operands.top == Cell.fromBool (true));
+    
+    stacky.eval (`
+        clear-stack
+
+        [] begin
+            /dict 1 def
+            /dict where
+        end
     `);
     assert (stacky.operands.top == Cell.fromBool (true));
 
