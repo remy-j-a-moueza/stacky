@@ -13,6 +13,7 @@ import core.exception;
 import pegged.grammar;
 import pegged.tester.grammartester;
 
+
 mixin (grammar (`
 StackyLang:
 
@@ -23,6 +24,8 @@ StackyLang:
                / Real
                / Integer
                / Bool
+               / Directive
+               / Eol
                / Symbol
     
     Symbol     <-  ~((! [ \t\n\r]) .)+
@@ -40,15 +43,21 @@ StackyLang:
     Integer    <~ Sign? Unsigned
     Hexa       <~ [0-9a-fA-F]+
     Sign       <- '-' / '+'
+
+    # Directives
+    Directive < ~"#file" String
+              / ~"#line" Integer
+              / ~"#function" String
     
     # Space related.
-    Spacing    <- :(Comment / " " / "\t" / "\r\n" / "\r" / "\n")*
+    Spacing    <- :(Comment / " " / "\t")*
     
-    MultiCmt   <~ "%(" ( (!('{'/'}') .)*   MultiCmt*  Spacing* )* ")%"
+    MultiCmt   <~ "%(" ( (!('{'/'}') .)*   MultiCmt*  Spacing* Eol* )* ")%"
     Comment    <- MultiCmt 
                 / "%" (! Eol  .)* Eol
     Eol        <- ("\r\n" / "\r" / "\n")
 `));
+
 
 void grammarTest () {
     auto tester = new GrammarTester!(StackyLang, "Program");
@@ -58,6 +67,16 @@ void grammarTest () {
     tester.assertSimilar (`"hello"`,  `Program -> Word -> String`);  
     tester.assertSimilar (`r"hello"`, `Program -> Word -> RawString`);  
     tester.assertSimilar (`true`,     `Program -> Word -> Bool`);  
+    
+    tester.assertSimilar (
+        `#line 13`, 
+        `Program -> Word -> Directive -> Integer`);
+    tester.assertSimilar (
+        `#file "the-file.txt"`, 
+        `Program -> Word -> Directive -> String`);
+    tester.assertSimilar (
+        `#function "the-function"`, 
+        `Program -> Word -> Directive -> String`);
 }
 
 /** When a cell has the wrong kind. */
@@ -252,6 +271,39 @@ class Cell {
          */
         Cell [][string] dict;
     }
+
+    /// The filename where this cell is defined.
+    string fileName = ""; 
+    
+    /// The line number within the filename.
+    string lineNo   = "";
+
+    /// The function name in which this cell is.
+    string funcName = "";
+
+    /// Changes the fileName field.
+    Cell withFileName (string nm) {
+        this.fileName = nm;
+        return this;
+    }
+
+    /// Changes the lineNo field.
+    Cell withLineNo (string ln) {
+        this.lineNo = ln;
+        return this;
+    }
+    /// Changes the lineNo field.
+    Cell withLineNo (size_t ln) {
+        this.lineNo = ln.to!string;
+        return this;
+    }
+
+    /// Changes the funcName field.
+    Cell withFuncName (string fn) {
+        this.funcName = fn;
+        return this;
+    }
+
 
     this (int kind) {
         this.kind = kind;
@@ -831,26 +883,64 @@ Cell [] parse (string input) {
         }
     }
 
+    size_t lineCount = 1;
+    string fileName;
+    string funcName;
+    string lineNumr;
+
     foreach (word; words) {
         switch (word.name) {
             case "StackyLang.RawString": 
-                tokens ~= Cell.fromString (word.matches [0]);
+                tokens ~= Cell.fromString (word.matches [0])
+                              .withFileName (fileName)
+                              .withFuncName (funcName)
+                              .withLineNo   (lineCount);
                 break;
             case "StackyLang.String": 
-                tokens ~= Cell.fromString (word.matches [0]);
+                tokens ~= Cell.fromString (word.matches [0])
+                              .withFileName (fileName)
+                              .withFuncName (funcName)
+                              .withLineNo   (lineCount);
                 break;
             case "StackyLang.Real": 
-                tokens ~= Cell.fromDouble (word.matches [0].to!double);
+                tokens ~= Cell.fromDouble (word.matches [0].to!double)
+                              .withFileName (fileName)
+                              .withFuncName (funcName)
+                              .withLineNo   (lineCount);
                 break;
             case "StackyLang.Integer": 
-                tokens ~= Cell.fromLong (word.matches [0].to!long);
+                tokens ~= Cell.fromLong (word.matches [0].to!long)
+                              .withFileName (fileName)
+                              .withFuncName (funcName)
+                              .withLineNo   (lineCount);
                 break;
             case "StackyLang.Bool": 
-                tokens ~= Cell.fromBool (word.matches [0].to!bool);
+                tokens ~= Cell.fromBool (word.matches [0].to!bool)
+                              .withFileName (fileName)
+                              .withFuncName (funcName)
+                              .withLineNo   (lineCount);
                 break;
             case "StackyLang.Symbol": 
-                tokens ~= Cell.symbolNew (word.matches [0].to!string);
+                tokens ~= Cell.symbolNew (word.matches [0].to!string)
+                              .withFileName (fileName)
+                              .withFuncName (funcName)
+                              .withLineNo   (lineCount);
                 break;
+            case "StackyLang.Directive":
+                if ("#file" == word.matches [0]) {
+                    fileName = word.matches [1];
+                } else 
+                if ("#line" == word.matches [0]) {
+                    lineCount = (word.matches [1].to!size_t) -1;
+                } else 
+                if ("#function" == word.matches [0]) {
+                    funcName = word.matches [1];
+                }
+                break;
+            case "StackyLang.Eol":
+                lineCount ++;
+                break;
+
             default:
                 continue;
         }
@@ -862,6 +952,22 @@ void parseTest () {
     Cell [] tokens = " 1 2 3 ".parse;
     
     assert (tokens == map!(Cell.from) ([1L, 2L, 3L]).array); 
+
+    tokens = `
+        clear-stack
+        #file "<stdin>" #line 1
+        "hello, world!" 
+        writeln;
+        `.parse;
+
+    assert (tokens [0].fileName == "");
+    assert (tokens [0].funcName == "");
+    assert (tokens [0].lineNo   == "2");
+
+    assert (tokens [1].fileName == "<stdin>");
+    assert (tokens [1].lineNo   == "1");
+
+    assert (tokens [2].lineNo   == "2");
 }
 
 /// Return the top of the stack.
