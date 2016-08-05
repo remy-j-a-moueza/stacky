@@ -130,11 +130,13 @@ class Procedure {
     /// The procedure name, if given.
     string name = "";
 
+    /// Initialize a Procedure with tokens of code.
     this (int kind, Cell [] code) {
         this.kind = kind;
         this.code = code;
     }
 
+    /// Initialize a Procedure from native code.
     this (int kind, NativeType native) {
         this.kind   = kind;
         this.native = native;
@@ -304,11 +306,12 @@ class Cell {
         return this;
     }
 
-
+    /// Simple initialization with just the kind.
     this (int kind) {
         this.kind = kind;
     }
 
+    /// Returns a string representation of the cell's kind.
     string kindStr () { 
         switch (kind) {
         case Integer: 
@@ -498,13 +501,14 @@ class Cell {
     }
     
     
-    
+    /// Create a new empty dictionary cell.
     static Cell dictNew () {
         Cell self = new Cell (Dict);
         self.dict = null;
         return self;
     }
     
+    /// Return a string representation.
     override string toString () {
         switch (kind) {
             case Integer:
@@ -735,7 +739,12 @@ class Cell {
     }
 
     
-    /// Search a key in a dictionary.
+    /** Search a key in a dictionary.
+     * Returns null if nothing is found.
+     *
+     * Use a `Cell *` pointer from when Cell was a struct and as such we could
+     * not have null values.
+     */
     Cell * lookup (Cell symbol) {
         if (kind != Dict) {
             throw new InvalidCellKind ("lookup: we are not a Dict");
@@ -775,7 +784,7 @@ class Cell {
             "Expected an Array or a Dict.");
     }
 
-    /// Retrieve value at an index for arrays and dictinaries.
+    /// Retrieve value at an index for arrays and dictionaries.
     Cell opIndex (Cell key) {
         if (kind == Array) {
             if (key.kind != Integer) {
@@ -811,7 +820,6 @@ class Cell {
 
     /// Evaluate a procedure, given a Stacky interpreter.
     void eval (Stacky stacky) {
-        //"Cell.eval in %s".writefln (this);
         if (kind != Proc) {
             throw new InvalidCellKind ("Cell.eval: Not a Proc.");
         }
@@ -822,7 +830,6 @@ class Cell {
         } else if (proc.kind == Procedure.Words) {
             stacky.eval (proc.code ~ Cell.from!"symbol" ("exit"));
         }
-        //"Cell.eval out %s".writefln (this);
     }
 
 }
@@ -869,6 +876,8 @@ void cellTest () {
     assert (testDict [Cell.from!"symbol" ("toto")].integer == 0);
 }
 
+
+/** Returns an array of Cell from an input string. */
 Cell [] parse (string input) {
     Cell [] tokens;
     ParseTree tree = StackyLang (input);
@@ -986,9 +995,15 @@ Cell index (Cell [] stack, size_t n) {
     return stack [$ -1 -n];
 }
 
+/** A stack of cell. 
+ * Typically, the code of a procedure being called that is put on top of 
+ * the interpreter's execution stack.
+ */
 class CellStack {
     /// Keeps track of the iteration.
     size_t cursor = 0;
+
+    /// The name of the procedure being executed.
     string procName = ""; 
 
     /// The cells to be executed.
@@ -1024,6 +1039,7 @@ class CellStack {
          */
     }
 
+    /// String representation of what remains to be executed.
     override string toString () {
         return stack [min (cursor, $ -1)].to!string;
     }
@@ -1049,6 +1065,7 @@ class ExecutionStack {
         return clone;
     }
 
+    /// String representation of what remains to be executed.
     override string toString () {
         string [] res = []; 
         
@@ -1102,6 +1119,11 @@ class ExecutionStack {
         return this;
     }
 
+    /** Returns from a named procedure.
+     * If a named procedure is found in the CellStack array, we pop all the 
+     * other CellStack instances on top to get back to the execution
+     * just after that named procedure was called.
+     */
     void return_ () {
         size_t index;
         string procName = "";
@@ -1156,6 +1178,7 @@ void numberOp (void delegate (long, long) integerOp,
     }
 }
 
+/// A template for binary functions on numbers.
 void numberFun (void delegate (long) integerOp, 
                 void delegate (double) floatingOp) (Stacky stacky) 
 {
@@ -1202,6 +1225,7 @@ void numBinaryOp (alias binOp) (Stacky stacky) {
         }) (stacky);
 }
         
+/// A template for binary procedures.
 void cellBinOp (void delegate (Cell a, Cell b) op) (Stacky stacky) 
 {
     if (stacky.operands.length < 2) {
@@ -1216,6 +1240,7 @@ void cellBinOp (void delegate (Cell a, Cell b) op) (Stacky stacky)
     op (a, b);
 }
 
+/// A template for binary boolean operations.
 void boolBinOp (void delegate (Cell a, Cell b) op) (Stacky stacky) {
     if (stacky.operands.length < 2) {
         throw new StackUnderflow ("and: expected 2 arguments.");
@@ -1250,7 +1275,7 @@ class Stacky {
     /// Dictionary stack.
     Cell [] dicts;
 
-    /// Instruction pointer.
+    /// Instruction pointer of the operand stack.
     size_t ip = 0;
     
     /// Returns the top of the operand stack.
