@@ -128,7 +128,26 @@ class Procedure {
     }
 
     /// The procedure name, if given.
-    string name = "";
+    protected string _name = "";
+
+    /// Return the procedure name
+    string name () {
+        return _name;
+    }
+
+    /// Sets the procedure name; sets the name to the code token for Code kind.
+    void name (string val) {
+        this._name = val;
+
+        if (kind == Native) {
+            return;
+        }
+
+        foreach (token; code) {
+            token.funcName = _name;
+        }
+    }
+
 
     /// Initialize a Procedure with tokens of code.
     this (int kind, Cell [] code) {
@@ -251,7 +270,9 @@ class Cell {
         Bool,
         Array,
         Dict,
-        Proc
+        Proc,
+        Except,
+        Ptr
     }
 
     /// Tag to discriminate the union.
@@ -272,6 +293,9 @@ class Cell {
            This fixes a segfault when using Cell [Cell].
          */
         Cell [][string] dict;
+
+        Exception       exception;
+        void *          ptr;
     }
 
     /// The filename where this cell is defined.
@@ -291,7 +315,7 @@ class Cell {
 
     /// Changes the lineNo field.
     Cell withLineNo (string ln) {
-        this.lineNo = ln;
+        this.lineNo = ln.strip;
         return this;
     }
     /// Changes the lineNo field.
@@ -330,6 +354,10 @@ class Cell {
             return "Dict";
         case Proc:
             return "Proc";
+        case Except: 
+            return "Exception";
+        case Ptr:
+            return "Ptr";
         default:
             return "unknown";
         }
@@ -393,6 +421,20 @@ class Cell {
         return self;
     }
 
+    /// Initialization from an exception.
+    static Cell fromException (Exception exc) {
+        Cell self = new Cell (Except);
+        self.exception = exc;
+        return self;
+    }
+    
+    /// An initialization from a pointer.
+    static Cell fromPtr (void * ptr) {
+        Cell self = new Cell (Ptr);
+        self.ptr = ptr;
+        return self;
+    }
+
     /** Generic Initialization from a value. Type is inferred.
       
       stringKind tells to process string values either as
@@ -404,6 +446,8 @@ class Cell {
     ||  is (T : double)
     ||  is (T : string)
     ||  is (T : bool)
+    ||  is (T : Exception)
+    ||  is (T : void *)
     ||  is (T : Procedure)
     ||  is (T : Procedure.NativeType))
     {
@@ -435,7 +479,12 @@ class Cell {
         } else static if (is (T type : Procedure.NativeType)) {
             return Cell.procFromNative (val); 
             
-        } 
+        } else static if (is (T type : Exception)) {
+            return Cell.fromException (val);
+
+        } else static if (is (T type : void *)) {
+            return Cell.fromPtr (val);
+        }
     }
     
     /** Generic Initialization from an array. Type is inferred.
@@ -450,6 +499,8 @@ class Cell {
        ||  is (T    : double)
        ||  is (T    : string)
        ||  is (T    : bool)
+       ||  is (T    : Exception)
+       ||  is (T    : void *)
        ||  is (T    : Procedure.NativeType)))
     {
         Cell self = Cell.arrayNew ();
@@ -475,10 +526,14 @@ class Cell {
         ||  is (V : bool)
         ||  is (V : Procedure)
         ||  is (V : Procedure.NativeType)
+        ||  is (V : Exception)
+        ||  is (V : void *)
         ||  is (V : long [])
         ||  is (V : double [])
         ||  is (V : string [])
         ||  is (V : bool [])
+        ||  is (V : Exception [])
+        ||  is (V : void * [])
         ||  is (V : Procedure [])
         ||  is (V : Procedure.NativeType []))
     &&  (   is (K : long)
@@ -547,6 +602,15 @@ class Cell {
 
             case Proc:
                 return proc.toString;
+
+            case Except:
+                return "Exception(%s, %s, %s)"
+                        .format (exception.msg, 
+                                 exception.file,
+                                 exception.line);
+            case Ptr:
+                return "Ptr(%x)".format (ptr);
+
             default:
                 return "<unknown>";
         }
@@ -625,6 +689,12 @@ class Cell {
             
             case Proc:
                 return proc == cell.proc;
+
+            case Except:
+                return exception == cell.exception;
+
+            case Ptr:
+                return ptr == cell.ptr;
             
             default:
                 return false;
@@ -728,6 +798,16 @@ class Cell {
             case Proc:
                 return proc.opCmp (cell.proc);
             
+            case Except:
+                return exception == cell.exception
+                     ? 0
+                     : exception.msg < cell.exception.msg ? -1 : 1;
+
+            case Ptr:
+                return ptr == cell.ptr
+                     ? 0 
+                     : ptr < cell.ptr ? -1 : 1;
+            
             default:
                 return 1;
         }
@@ -750,10 +830,6 @@ class Cell {
             throw new InvalidCellKind ("lookup: we are not a Dict");
         }
 
-        if (symbol.kind != Symbol) {
-            throw new InvalidCellKind ("lookup: we are not given a Symbol");
-        }
-
         Cell []* match = symbol.sha1Hash in dict;
 
         if (! match) {
@@ -761,6 +837,21 @@ class Cell {
         }
 
         return &(*match) [1];
+    }
+    
+    /// Either return the key at given symbol or return the given alternative.
+    Cell lookup (Cell symbol, Cell alt) {
+        if (kind != Dict) {
+            throw new InvalidCellKind ("lookup: we are not a Dict");
+        }
+
+        Cell []* match = symbol.sha1Hash in dict;
+
+        if (! match) {
+            return alt;
+        }
+
+        return (*match) [1];
     }
 
     /// Assign at an index for arrays and dictionaries.
@@ -828,7 +919,8 @@ class Cell {
             proc.native (stacky);
 
         } else if (proc.kind == Procedure.Words) {
-            stacky.eval (proc.code ~ Cell.from!"symbol" ("exit"));
+            stacky.eval (proc.code ~ Cell.from!"symbol" ("exit"),
+                         proc.name);
         }
     }
 
@@ -1008,6 +1100,9 @@ class CellStack {
 
     /// The cells to be executed.
     Cell [] stack;
+
+    /// Exception handler.
+    Cell excHandler; 
     
     /// Create a new task. May pass a cursor.
     this (Cell [] stackIn = [], size_t cursor = 0, string procName = "") {
@@ -1115,6 +1210,11 @@ class ExecutionStack {
 
     /// Insert the given array for execution.
     ExecutionStack insert (Cell [] array, string procName = "") {
+        if (procName == "" && ! array.empty) {
+            if (array [0].funcName != "") {
+                procName = array [0].funcName;
+            }
+        }
         stack ~= new CellStack (array, 0, procName);
         return this;
     }
@@ -1139,6 +1239,50 @@ class ExecutionStack {
         }
 
         stack = stack [0 .. index];
+    }
+
+    /// Return stack trace and eventual exception handler.
+    Cell [] traceAndHandler () {
+        if (stack.empty) {
+            auto array  = new Cell (Cell.Array);
+            array.array = [];
+            
+            return [array, Cell.fromBool (false)];
+        }
+
+        Cell callStack  = new Cell (Cell.Array);
+        callStack.array = [];
+        
+        for (size_t index = 0; index < stack.length; ++ index) {
+            if (stack [index].procName == "") {
+                continue;
+            }
+            auto cStack = stack [index];
+            Cell token  = cStack.stack [min (cStack.cursor -1, $)];
+
+            Cell trace 
+                = Cell.from!"symbol" ([
+                    "file": token.fileName,
+                    "line": token.lineNo,
+                    "func": token.funcName ]);
+            trace [Cell.fromSymbol ("token")] = token;
+
+            callStack.array ~= trace;
+        }
+
+        Cell excHandler;
+
+        for (size_t index = stack.length -1; index <= 0; -- index) {
+            if (stack [index].excHandler !is null) {
+                excHandler = stack [index].excHandler;
+                break;
+            }
+        }
+        if (excHandler is null) {
+            excHandler = Cell.fromBool (false);
+        }
+
+        return [callStack, excHandler];
     }
 }
 
@@ -1277,6 +1421,9 @@ class Stacky {
 
     /// Instruction pointer of the operand stack.
     size_t ip = 0;
+
+    /// A flag to stop the interpreter.
+    protected bool exitNow = false;
     
     /// Returns the top of the operand stack.
     Cell top () {
@@ -1657,7 +1804,10 @@ class Stacky {
                 key = name;
             }
 
+            "def: %s => %s".writefln (key, obj);
+
             if (obj.kind == Cell.Proc) {
+                "def: set proc name".writeln;
                 obj.proc.name = key.symbol;
             }
 
@@ -1717,11 +1867,21 @@ class Stacky {
         };
         
         procs ["/"] = (Stacky stacky) {
-            numBinaryOp!((a, b) => a / b) (stacky);
+            numBinaryOp!((a, b) { 
+                if (b == 0) {
+                    throw new Exception ("Division by zero");
+                }
+                return a / b;
+            }) (stacky);
         };
         
         procs ["mod"] = (Stacky stacky) {
-            numBinaryOp!((a, b) => a % b) (stacky);
+            numBinaryOp!((a, b) { 
+                if (b == 0) {
+                    throw new Exception ("Division by zero");
+                }
+                return a % b;
+            }) (stacky);
         };
 
         procs ["divmod"] = (Stacky stacky) {
@@ -2452,53 +2612,128 @@ class Stacky {
     }
 
     /** Evaluate an input string. */
-    void eval (string input) {
+    void eval (string input, string procName = "") {
         //`eval "%s"`.writefln (input);
-        eval (parse (input));
+        eval (parse (input), procName);
     }
 
     /** Evaluate an input array of cells. */
-    void eval (Cell [] tokens) {
+    void eval (Cell [] tokens, string procName = "") {
         //"%s".writefln ('='.repeat (50));
         //operands [0.. ip].writeln;
         //"%s".writefln ('='.repeat (50));
         
         //"eval %s".writefln (tokens);
-        execution.insert (tokens);
+        execution.insert (tokens, procName);
         "execution: %s".writefln (execution.toString);
 
         foreach (token; execution) {
-            "%s".writefln ('-'.repeat (50));
-            operands [0.. ip].writeln;
-            "%s".writefln ('-'.repeat (50));
-            "execution: %s".writefln (execution.toString);
-            //"%s".writefln ('.'.repeat (50));
-            push (token);
-            `eval "%s"`.writefln (token);
+            if (exitNow) {
+                return;
+            }
+            try {
+                "%s".writefln ('-'.repeat (50));
+                operands [0.. ip].writeln;
+                "%s".writefln ('-'.repeat (50));
+                "execution: %s".writefln (execution.toString);
+                //"%s".writefln ('.'.repeat (50));
+                
+                "    token: %s: %s: %s: %s".writefln (
+                    token.fileName,
+                    token.funcName,
+                    token.lineNo,
+                    token);
 
-            switch (token.kind) {
-                case Cell.Integer: 
-                case Cell.Floating:
-                case Cell.String: 
-                case Cell.Bool:
-                case Cell.Array:
-                case Cell.Dict:
-                case Cell.Proc:
-                    continue;
+                push (token);
+                `eval "%s"`.writefln (token);
 
-                case Cell.Symbol:
-                    if (token.symbol == "exit"
-                    ||  token.symbol == "break") {
-                        //"exiting.".writeln;
-                        pop ();
-                        execution.popFront ();
-                        return;
-                    }
-                    evalSymbol (token);
-                    continue;
-                default:
+                switch (token.kind) {
+                    case Cell.Integer: 
+                    case Cell.Floating:
+                    case Cell.String: 
+                    case Cell.Bool:
+                    case Cell.Array:
+                    case Cell.Dict:
+                    case Cell.Proc:
+                        continue;
+
+                    case Cell.Symbol:
+                        if (token.symbol == "exit"
+                        ||  token.symbol == "break") {
+                            //"exiting.".writeln;
+                            pop ();
+                            execution.popFront ();
+                            return;
+                        }
+                        evalSymbol (token);
+                        continue;
+                    default:
+                }
+            } 
+            catch (Exception e) {
+                Cell [] traceAndHandler = execution.traceAndHandler ();
+
+                Cell traces  = traceAndHandler [0];
+                Cell handler = traceAndHandler [1];
+
+                if (handler == Cell.fromBool (false)) {
+                    stderr.writeln (stackTrace (token));
+                    return;
+                } else {
+                    push (traces);
+                    push (exception);
+                    handler.eval (this);
+                }
             }
         }
+    }
+
+    string stackTrace (Cell token, Exception e = null) {
+        string or (string val, string alt) {
+            if (val != "")
+                return val;
+            else 
+                return alt;
+        }
+        Cell sym (string val) {
+            return Cell.fromSymbol (val);
+        }
+        Cell [] traceAndHandler = execution.traceAndHandler ();
+        Cell traces  = traceAndHandler [0];
+        Cell handler = traceAndHandler [1];
+        string [] msgs = [];
+        
+        if (e !is null) {
+            msgs ~= 
+                "\nStacky: Uncaught Exception\n  %s: %s: %s: %s"
+                .format (typeid (e), e.file, e.line, e.msg);
+        }
+
+        if (traces != Cell.fromBool (false)) {
+            foreach (Cell trace; traces.array) {
+                Cell nope = sym ("??");
+                
+                // Get the values. The maybe empty.
+                auto file = trace.lookup (sym ("file"), nope);
+                auto func = trace.lookup (sym ("func"), nope);
+                auto line = trace.lookup (sym ("line"), nope);
+                auto tokn = trace.lookup (sym ("token"), nope);
+
+                // Display the values, replace empty vals by ??.
+                msgs ~= "  in %s: %s: %s\n    %s".format ( 
+                        or (file.symbol, "??"), 
+                        or (func.symbol, "??"), 
+                        or (line.symbol, "??"), 
+                        token); 
+                        
+            }
+        }
+        msgs ~= "  in %s: %s: %s\n    %s".format ( 
+                    or (token.fileName,  "??"),
+                    or (token.funcName,  "??"),
+                    or (token.lineNo,    "??"),
+                    token);
+        return msgs.join ("\n");
     }
 
     void evalSymbol (ref Cell op) {
@@ -2556,219 +2791,236 @@ class Stacky {
 void stackyTest () {
     Stacky stacky = new Stacky; 
 
-    assert (stacky.operands == []);
+    //~assert (stacky.operands == []);
+    //~
+    //~stacky.push (Cell.from (1));
+    //~stacky.push (Cell.from (2));
+
+    //~assert (stacky.operands == [Cell.from (1), Cell.from (2)]);
+
+    //~stacky.eval (`clear-stack`);
+    //~assert (stacky.operands == []);
+    //~
+    //~stacky.eval ("1 2 3");
+    //~assert (stacky.operands == map!(Cell.from) ([1L, 2L, 3L]).array);
+
+    //~stacky.eval (`clear-stack 1 dup`);
+    //~assert (stacky.operands == [Cell.from (1), Cell.from (1)]);
+
+    //~stacky.eval (`clear-stack 1 2 3 drop swap`);
+    //~assert (stacky.operands == [Cell.from (2), Cell.from (1)]);
+
+    //~stacky.eval (`clear-stack 1 2 3 2 copy`);
+    //~assert (stacky.operands 
+    //~        == map!(Cell.from) ([1, 2, 3, 2, 3]).array);
+
+    //~stacky.eval (`clear-stack 1 2 3 2 rolln`);
+    //~assert (stacky.operands 
+    //~        == map!(Cell.from) ([3, 2, 1]).array,
+    //~        "operands: %s".format (stacky.operands));
+
+    //~stacky.eval (`clear-stack mark "hello" "world" count-to-mark`);
+    //~assert (stacky.top == Cell.from (2));
+    //~
+    //~stacky.eval (`clear-to-mark`);
+    //~assert (stacky.operands == []);
+
+    //~stacky.eval (`clear-stack ( 1 2 3 )`);
+    //~assert (stacky.top == Cell.from ([1L, 2L, 3L]));
+
+    //~stacky.eval (`clear-stack [ "hello" "world" ]`);
+    //~assert (stacky.top == Cell.from (["hello": "world"]));
+
+    //~stacky.eval (`clear-stack { dup dup }`);
+    //~assert (stacky.top.kind == Cell.Proc);
+    //~assert (stacky.top.proc.code 
+    //~        == map!(Cell.fromSymbol) (["dup", "dup"]).array);
+
+    //~assert (stacky.dicts.top.dict.keys.empty);
+    //~stacky.eval (`clear-stack /2dup { dup dup } def print-stack`);
+    //~assert (! stacky.dicts.top.dict.keys.empty);
+
+    //~stacky.eval (`clear-stack 1 2 2dup`);
+    //~assert (stacky.operands
+    //~        == map!(Cell.from) ([1, 2, 2, 2]).array);
+
+    //~stacky.eval (`clear-stack 1 2 stack-length`);
+    //~assert (stacky.operands.top == Cell.from (2));
+
+    //~stacky.eval (`clear-stack 1 2 + 3 =`);
+    //~assert (stacky.operands.top == Cell.fromBool (true));
+
+    //~stacky.eval (`clear-stack 3.0 4 * 12.0 = `);
+    //~assert (stacky.operands.top == Cell.fromBool (true));
+
+    //~stacky.eval (`clear-stack ( 1 2 3 ) { 2 + } for-all`);
+    //~assert (stacky.operands
+    //~        == map!(Cell.from) ([3, 4, 5]).array);
+
+    //~stacky.eval (`clear-stack true { "toto" } if`);
+    //~assert (stacky.operands.top == Cell.from ("toto"));
+
+    //~stacky.eval (`clear-stack false { "yep" } { "nope" } ifelse`);
+    //~assert (stacky.operands.top == Cell.from ("nope"));
+
+    //~stacky.eval (`clear-stack ( 0 1 2 3 ) 1 get`);
+    //~assert (stacky.operands.top == Cell.from (1));
+
+    //~stacky.eval (`clear-stack "hello" 1 get`);
+    //~assert (stacky.operands.top == Cell.from ("e"));
+
+    //~stacky.eval (`
+    //~    clear-stack
+
+    //~    /all { 
+    //~        [] begin 
+    //~        /proc   swap def 
+    //~        /array  swap def
+    //~        /status true def
+    //~        
+    //~        array { 
+    //~            proc true = not { 
+    //~                /status false def 
+    //~            } if 
+    //~        } for-all
+    //~        
+    //~        status
+    //~        end
+    //~    } def 
+    //~`);
+    //~stacky.eval (` ( 1 2 3 ) { 5 < } all `);
+    //~assert (stacky.operands.top == Cell.fromBool (true));
+    //~
+    //~stacky.eval (`
+    //~    clear-stack
+
+    //~    /any { 
+    //~        [] begin 
+    //~        /proc   swap def 
+    //~        /array  swap def
+    //~        
+    //~        array { 
+    //~            proc true = { 
+    //~                true 
+    //~                return
+    //~            } if 
+    //~        } for-all
+    //~        
+    //~        end
+    //~    } def 
+
+    //~    ( 1 2 3 ) { 5 < } any
+    //~`);
+    //~assert (stacky.operands.top == Cell.fromBool (true));
+
+    //~stacky.eval (`
+    //~    clear-stack
+
+    //~    /map {
+    //~        [] begin
+    //~        /proc   swap  def
+    //~        /source swap  def
+    //~        /target  ()   def 
+
+    //~        source { proc target push } for-all
+
+    //~        target
+    //~        end
+    //~    } def
+    //~`);
+    //~stacky.eval (` 
+    //~    ( 1 2 3 ) { 2 * } map 
+    //~    ( 2 4 6 ) = 
+    //~`);
+    //~assert (stacky.operands.top == Cell.fromBool (true));
+
+    //~stacky.eval (`
+    //~    clear-stack
+
+    //~    /filter {
+    //~        [] begin
+    //~        /proc   swap def
+    //~        /source swap def 
+    //~        /target  ()  def
+
+    //~        source {
+    //~            dup proc true =
+    //~            { target push } { drop } if-else
+    //~        } for-all
+    //~        
+    //~        target
+    //~        end
+    //~    } def
+
+    //~    ( 1 9 3 10 4 16 ) { 5 > } filter
+    //~    ( 9 10 16 ) =
+    //~`);
+    //~assert (stacky.operands.top == Cell.fromBool (true));
+    //~
+    //~stacky.eval (`
+    //~    clear-stack
+
+    //~    10 (
+    //~        { 5 > } {  "> 5" }
+    //~        /else   { "<= 5" }
+    //~    ) cond
+
+    //~    "> 5" =
+    //~`);
+    //~assert (stacky.operands.top == Cell.fromBool (true));
+    //~
+    //~stacky.eval (`
+    //~    clear-stack
+    //~    "hello" [ "hello" "world" ] known 
+    //~`);
+    //~assert (stacky.operands.top == Cell.fromBool (true));
+    //~
+    //~stacky.eval (`
+    //~    clear-stack
+    //~    [ /hello "world" ] begin
+    //~        /hello "tomato" store
+    //~        hello "tomato" =
+    //~    end
+    //~`);
+    //~assert (stacky.operands.top == Cell.fromBool (true));
+    //~
+    //~stacky.eval (`
+    //~    clear-stack
+
+    //~    [] begin
+    //~        /dict [ /hello "world" ] def
+    //~        dict /hello undef
+    //~        dict [] = 
+    //~    end
+    //~`);
+    //~assert (stacky.operands.top == Cell.fromBool (true));
+    //~
+    //~stacky.eval (`
+    //~    clear-stack
+
+    //~    [] begin
+    //~        /dict 1 def
+    //~        /dict where
+    //~    end
+    //~`);
+    //~assert (stacky.operands.top == Cell.fromBool (true));
     
-    stacky.push (Cell.from (1));
-    stacky.push (Cell.from (2));
-
-    assert (stacky.operands == [Cell.from (1), Cell.from (2)]);
-
-    stacky.eval (`clear-stack`);
-    assert (stacky.operands == []);
-    
-    stacky.eval ("1 2 3");
-    assert (stacky.operands == map!(Cell.from) ([1L, 2L, 3L]).array);
-
-    stacky.eval (`clear-stack 1 dup`);
-    assert (stacky.operands == [Cell.from (1), Cell.from (1)]);
-
-    stacky.eval (`clear-stack 1 2 3 drop swap`);
-    assert (stacky.operands == [Cell.from (2), Cell.from (1)]);
-
-    stacky.eval (`clear-stack 1 2 3 2 copy`);
-    assert (stacky.operands 
-            == map!(Cell.from) ([1, 2, 3, 2, 3]).array);
-
-    stacky.eval (`clear-stack 1 2 3 2 rolln`);
-    assert (stacky.operands 
-            == map!(Cell.from) ([3, 2, 1]).array,
-            "operands: %s".format (stacky.operands));
-
-    stacky.eval (`clear-stack mark "hello" "world" count-to-mark`);
-    assert (stacky.top == Cell.from (2));
-    
-    stacky.eval (`clear-to-mark`);
-    assert (stacky.operands == []);
-
-    stacky.eval (`clear-stack ( 1 2 3 )`);
-    assert (stacky.top == Cell.from ([1L, 2L, 3L]));
-
-    stacky.eval (`clear-stack [ "hello" "world" ]`);
-    assert (stacky.top == Cell.from (["hello": "world"]));
-
-    stacky.eval (`clear-stack { dup dup }`);
-    assert (stacky.top.kind == Cell.Proc);
-    assert (stacky.top.proc.code 
-            == map!(Cell.fromSymbol) (["dup", "dup"]).array);
-
-    assert (stacky.dicts.top.dict.keys.empty);
-    stacky.eval (`clear-stack /2dup { dup dup } def print-stack`);
-    assert (! stacky.dicts.top.dict.keys.empty);
-
-    stacky.eval (`clear-stack 1 2 2dup`);
-    assert (stacky.operands
-            == map!(Cell.from) ([1, 2, 2, 2]).array);
-
-    stacky.eval (`clear-stack 1 2 stack-length`);
-    assert (stacky.operands.top == Cell.from (2));
-
-    stacky.eval (`clear-stack 1 2 + 3 =`);
-    assert (stacky.operands.top == Cell.fromBool (true));
-
-    stacky.eval (`clear-stack 3.0 4 * 12.0 = `);
-    assert (stacky.operands.top == Cell.fromBool (true));
-
-    stacky.eval (`clear-stack ( 1 2 3 ) { 2 + } for-all`);
-    assert (stacky.operands
-            == map!(Cell.from) ([3, 4, 5]).array);
-
-    stacky.eval (`clear-stack true { "toto" } if`);
-    assert (stacky.operands.top == Cell.from ("toto"));
-
-    stacky.eval (`clear-stack false { "yep" } { "nope" } ifelse`);
-    assert (stacky.operands.top == Cell.from ("nope"));
-
-    stacky.eval (`clear-stack ( 0 1 2 3 ) 1 get`);
-    assert (stacky.operands.top == Cell.from (1));
-
-    stacky.eval (`clear-stack "hello" 1 get`);
-    assert (stacky.operands.top == Cell.from ("e"));
-
     stacky.eval (`
         clear-stack
 
-        /all { 
-            [] begin 
-            /proc   swap def 
-            /array  swap def
-            /status true def
-            
-            array { 
-                proc true = not { 
-                    /status false def 
-                } if 
-            } for-all
-            
-            status
-            end
-        } def 
-    `);
-    stacky.eval (` ( 1 2 3 ) { 5 < } all `);
-    assert (stacky.operands.top == Cell.fromBool (true));
-    
-    stacky.eval (`
-        clear-stack
-
-        /any { 
-            [] begin 
-            /proc   swap def 
-            /array  swap def
-            
-            array { 
-                proc true = { 
-                    true 
-                    return
-                } if 
-            } for-all
-            
-            end
-        } def 
-
-        ( 1 2 3 ) { 5 < } any
-    `);
-    assert (stacky.operands.top == Cell.fromBool (true));
-
-    stacky.eval (`
-        clear-stack
-
-        /map {
+        /test-exception {
             [] begin
-            /proc   swap  def
-            /source swap  def
-            /target  ()   def 
+            /sub-function {
+                % 1 0 /
+                1 +
+            } def 
 
-            source { proc target push } for-all
-
-            target
+            sub-function
             end
         } def
-    `);
-    stacky.eval (` 
-        ( 1 2 3 ) { 2 * } map 
-        ( 2 4 6 ) = 
-    `);
-    assert (stacky.operands.top == Cell.fromBool (true));
 
-    stacky.eval (`
-        clear-stack
-
-        /filter {
-            [] begin
-            /proc   swap def
-            /source swap def 
-            /target  ()  def
-
-            source {
-                dup proc true =
-                { target push } { drop } if-else
-            } for-all
-            
-            target
-            end
-        } def
-
-        ( 1 9 3 10 4 16 ) { 5 > } filter
-        ( 9 10 16 ) =
+        test-exception
     `);
-    assert (stacky.operands.top == Cell.fromBool (true));
-    
-    stacky.eval (`
-        clear-stack
-
-        10 (
-            { 5 > } {  "> 5" }
-            /else   { "<= 5" }
-        ) cond
-
-        "> 5" =
-    `);
-    assert (stacky.operands.top == Cell.fromBool (true));
-    
-    stacky.eval (`
-        clear-stack
-        "hello" [ "hello" "world" ] known 
-    `);
-    assert (stacky.operands.top == Cell.fromBool (true));
-    
-    stacky.eval (`
-        clear-stack
-        [ /hello "world" ] begin
-            /hello "tomato" store
-            hello "tomato" =
-        end
-    `);
-    assert (stacky.operands.top == Cell.fromBool (true));
-    
-    stacky.eval (`
-        clear-stack
-
-        [] begin
-            /dict [ /hello "world" ] def
-            dict /hello undef
-            dict [] = 
-        end
-    `);
-    assert (stacky.operands.top == Cell.fromBool (true));
-    
-    stacky.eval (`
-        clear-stack
-
-        [] begin
-            /dict 1 def
-            /dict where
-        end
-    `);
-    assert (stacky.operands.top == Cell.fromBool (true));
 
     "%s".writefln ('*'.repeat (30));
     stacky.operands.writeln;
