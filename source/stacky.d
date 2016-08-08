@@ -7,6 +7,7 @@ import std.array;
 import std.digest.sha;
 import std.range;
 import std.math;
+import std.regex;
 
 import core.exception;
 
@@ -910,7 +911,7 @@ class Cell {
     }
 
     /// Evaluate a procedure, given a Stacky interpreter.
-    void eval (Stacky stacky) {
+    void eval (Stacky stacky, Cell excHandler = null) {
         if (kind != Proc) {
             throw new InvalidCellKind ("Cell.eval: Not a Proc.");
         }
@@ -920,7 +921,8 @@ class Cell {
 
         } else if (proc.kind == Procedure.Words) {
             stacky.eval (proc.code ~ Cell.from!"symbol" ("exit"),
-                         proc.name);
+                         proc.name,
+                         excHandler);
         }
     }
 
@@ -1105,10 +1107,16 @@ class CellStack {
     Cell excHandler; 
     
     /// Create a new task. May pass a cursor.
-    this (Cell [] stackIn = [], size_t cursor = 0, string procName = "") {
-        this.stack    = stackIn;
-        this.cursor   = cursor;
-        this.procName = procName;
+    this (
+            Cell [] stackIn = [], 
+            size_t cursor = 0, 
+            string procName = "",
+            Cell excHandler = null) 
+    {
+        this.stack      = stackIn;
+        this.cursor     = cursor;
+        this.procName   = procName;
+        this.excHandler = excHandler;
     }
 
     /// Duplicate this object.
@@ -1144,6 +1152,9 @@ class CellStack {
 class ExecutionStack {
     /// The cells to be executed.
     CellStack [] stack;
+
+    /// Last exception handler, to deal with exception even with an empty stack.
+    Cell lastExcHandler;
 
     /// Create a new task. May pass a cursor.
     this (CellStack [] stackIn = []) {
@@ -1196,6 +1207,9 @@ class ExecutionStack {
         Cell value = stack.back.front;
         
         if (stack.back.empty) {
+            if (stack.back.excHandler !is null) {
+                lastExcHandler = stack.back.excHandler;
+            }
             stack.popBack;
         }
         return value;
@@ -1209,13 +1223,20 @@ class ExecutionStack {
     }
 
     /// Insert the given array for execution.
-    ExecutionStack insert (Cell [] array, string procName = "") {
+    ExecutionStack insert (
+            Cell [] array, 
+            string procName = "", 
+            Cell excHandler = null) 
+    {
         if (procName == "" && ! array.empty) {
             if (array [0].funcName != "") {
                 procName = array [0].funcName;
             }
         }
-        stack ~= new CellStack (array, 0, procName);
+        stack ~= new CellStack (array, 0, procName, excHandler);
+        lastExcHandler = excHandler;
+        
+        "excHandler is: %s".writefln (excHandler);
         return this;
     }
 
@@ -1246,6 +1267,10 @@ class ExecutionStack {
         if (stack.empty) {
             auto array  = new Cell (Cell.Array);
             array.array = [];
+
+            if (lastExcHandler !is null) {
+                return [array, lastExcHandler];
+            }
             
             return [array, Cell.fromBool (false)];
         }
@@ -1279,10 +1304,38 @@ class ExecutionStack {
             }
         }
         if (excHandler is null) {
-            excHandler = Cell.fromBool (false);
+            if (lastExcHandler !is null) {
+                excHandler = lastExcHandler;
+            } else {
+                excHandler = Cell.fromBool (false);
+            }
         }
 
         return [callStack, excHandler];
+    }
+
+    /** Unwind the stack after an exception. 
+        Get back to the frame of the exception handler, if any.
+
+        Return:
+        - 0 if the stack is empty (nothing to unwind)
+        - 1 if we managed to unwind the stack to an exception handler, 
+        - 2 if there was no exception handler found.
+     */
+    int unwind () {
+        if (stack.empty) {
+            return 0;
+        }
+        
+        size_t index;
+
+        for (index = stack.length; 0 <= index ; -- index) {
+            if (stack [index].excHandler !is null) {
+                stack = stack [0 .. index];
+                return 1;
+            }
+        }
+        return 2;
     }
 }
 
@@ -2586,6 +2639,87 @@ class Stacky {
             }
         };
 
+        procs ["try-catch"] = (Stacky stacky) {
+            if (operands.length < 2) {
+                throw new StackUnderflow (
+                    "try-catch: not enough arguments (needs 2).");
+            }
+
+            Cell recover  = stacky.top ();
+            Cell attempt  = stacky.index (2);
+            
+            if (attempt.kind != Cell.Proc) {
+                throw new InvalidCellKind (
+                    "try-catch 1st arg is not a Proc: %s.".format (attempt));
+            }
+
+            if (recover.kind != Cell.Array) {
+                throw new InvalidCellKind (
+                    "try-catch: 2nd arg is not an Array: %s.".format (recover));
+            }
+
+            if (recover.array.length % 2 != 0) {
+                throw new InvalidCellKind (
+                    "try-catch, 2nd arg: array length is not a multiple of 2: %s."
+                    .format (recover));
+            }
+            
+            stacky.pop ();
+            stacky.pop ();
+            
+            for (size_t i = 0; i < recover.array.length; i += 2) {
+                Cell excName  = recover.array [i];
+                Cell action   = recover.array [i +1];
+
+                if (excName.kind != Cell.Symbol) {
+                    throw new InvalidCellKind (
+                        "try-catch, 2nd arg: array [%s] is not a Symbol: %s"
+                        .format (i, excName));
+                }
+
+                if (action.kind != Cell.Proc) {
+                    throw new InvalidCellKind (
+                        "try-catch, 2nd arg: array [%s] is not a Proc: %s."
+                        .format (i +1, action));
+                }
+            }
+
+            Cell handler = Cell.from (delegate void (Stacky stacky) {
+                auto traces    = stacky.top (); 
+                auto exception = stacky.index (2);
+                auto coreRe    = regex (`^core.Exception|^object.`);
+                auto eName     = typeid (exception)
+                                 .to!string
+                                 .replaceFirst (coreRe, "");
+                bool dealtWith = false;
+
+                "Exception handler: %s".writefln (exception);
+
+                for (size_t i = 0; i < recover.array.length; i += 2) {
+                    Cell excName  = recover.array [i];
+                    Cell action   = recover.array [i +1];
+        
+                    if (eName != excName.symbol) {
+                        continue;
+                    }
+                    
+                    int status = stacky.execution.unwind ();
+
+                    if (status == 0 || status == 1) {
+                        action.eval (stacky);
+                        stacky.push (Cell.fromBool (true));
+                        return;
+                    }
+                }
+
+                if (! dealtWith) {
+                        stacky.push (Cell.fromBool (false));
+                }
+            });
+
+            attempt.eval (stacky, handler);
+        };
+
         return Cell.from!("symbol", string, Procedure.NativeType) (procs);
     }
 
@@ -2618,13 +2752,13 @@ class Stacky {
     }
 
     /** Evaluate an input array of cells. */
-    void eval (Cell [] tokens, string procName = "") {
+    void eval (Cell [] tokens, string procName = "", Cell excHandler = null) {
         //"%s".writefln ('='.repeat (50));
         //operands [0.. ip].writeln;
         //"%s".writefln ('='.repeat (50));
         
         //"eval %s".writefln (tokens);
-        execution.insert (tokens, procName);
+        execution.insert (tokens, procName, excHandler);
         "execution: %s".writefln (execution.toString);
 
         foreach (token; execution) {
@@ -2677,12 +2811,21 @@ class Stacky {
                 Cell handler = traceAndHandler [1];
 
                 if (handler == Cell.fromBool (false)) {
+                    "No exc handler found".writeln;
                     stderr.writeln (stackTrace (token));
                     return;
                 } else {
                     push (traces);
-                    push (exception);
+                    push (Cell.fromException (e));
                     handler.eval (this);
+
+                    if (top == Cell.fromBool (false)) {
+                        stderr.writeln (stackTrace (token));
+                        this.exitNow = true;
+                        return;
+                    } else {
+                        pop ();
+                    }
                 }
             }
         }
@@ -3019,7 +3162,9 @@ void stackyTest () {
             end
         } def
 
-        test-exception
+        { test-exception } (
+            /Exception { "recovering from exception" print-stack }
+        ) try-catch
     `);
 
     "%s".writefln ('*'.repeat (30));
