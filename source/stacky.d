@@ -1147,6 +1147,11 @@ class ExecutionStack {
         return clone;
     }
 
+    /// Replace our stack with the other's.
+    void restoreFrom (ExecutionStack other) {
+        this.stack = other.stack;
+    }
+
     /// String representation of what remains to be executed.
     override string toString () {
         string [] res = []; 
@@ -2660,6 +2665,7 @@ class Stacky {
 
     /** Evaluate an input string. */
     void eval (string input, string procName = "") {
+        this.exitNow = false;
         eval (parse (input), procName);
     }
 
@@ -2834,7 +2840,7 @@ class Stacky {
             
             if (excHandler !is null) {
                 // unwind the stack.
-                execution = backup;
+                execution.restoreFrom (backup);
                 excManaged = false;
                 
                 // Push the exception on the stack.
@@ -3100,7 +3106,9 @@ void repl () {
     
     `stacky> `.write;
     foreach (line; stdin.byLine) {
-        stacky.eval (line.to!string, "<stdin>");
+        string code = `#file "<stdin>" #function "main"` ~ "\n" 
+                    ~ line.to!string;
+        stacky.eval (code, "main");
         stacky.eval ("print-stack");
         `stacky> `.write;
     }
