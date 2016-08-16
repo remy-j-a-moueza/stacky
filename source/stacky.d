@@ -159,13 +159,13 @@ class Type {
         */
 
     /// A delegate to display the values of this type.
-    string delegate (Cell) valToString; 
+    string delegate (Cell) valToString = null; 
 
     /// A delegate to test the equality of values of this type.
-    bool delegate (Object) valOpEqual;
+    bool delegate (Object) valOpEqual = null;
 
     /// A delegate to compare values of this type.
-    int delegate (Object) valOpCmp;
+    int delegate (Object) valOpCmp = null;
 
     /// For procedure, the return types.
     Type [] outputs; 
@@ -236,6 +236,12 @@ Type MultiM;
 Type Cons, Prod, Sum, Appl, TypeT;
 
 /// Initializes the native types.
+/+ TODO:
+this does not works.
+The procs[] delegates are not using types properly initialized.
+Move them either elsewhere or move the procs functions in a `static this()`
+method.
+ +/
 static this () {
     Any      = new Type ("Any",      true); 
     Integer  = new Type ("Integer",  true); 
@@ -259,16 +265,16 @@ static this () {
     Cons.valToString = (Cell cell) {
         return "Cons <%s>".format (cell.val.get!(Cell []));
     };
-    Cons.valToString = (Cell cell) {
+    Prod.valToString = (Cell cell) {
         return "Prod <%s>".format (cell.val.get!(Cell []));
     };
-    Cons.valToString = (Cell cell) {
+    Sum.valToString = (Cell cell) {
         return "Sum <%s>".format (cell.val.get!(Cell []));
     };
-    Cons.valToString = (Cell cell) {
+    Appl.valToString = (Cell cell) {
         return "Appl <%s>".format (cell.val.get!(Cell []));
     };
-    Cons.valToString = (Cell cell) {
+    TypeT.valToString = (Cell cell) {
         return "Type <%s>".format (cell.val.get!(Cell []));
     };
 }
@@ -760,11 +766,12 @@ class Cell {
                              exception.line);
         }
 
-        if (type.valToString !is null) {
-            return type.valToString (this);
-        }
+        //if (type.valToString !is null) {
+        //    return type.valToString (this);
+        //}
+        return "<Cell typed \"%s\">".format (type);
 
-        return "<unknown>";
+        //return "<unknown>";
     }
 
     /// Equality operator.
@@ -2794,7 +2801,7 @@ class Stacky {
                     .format (stacky.operands.length));
             }
             Cell a = stacky.index (1);
-            Cell b = stacky.index (1);
+            Cell b = stacky.index (2);
             
             stacky.pop ();
             stacky.pop ();
@@ -2822,7 +2829,7 @@ class Stacky {
                     .format (stacky.operands.length));
             }
             Cell a = stacky.index (1);
-            Cell b = stacky.index (1);
+            Cell b = stacky.index (2);
             
             stacky.pop ();
             stacky.pop ();
@@ -2844,6 +2851,8 @@ class Stacky {
 
         types ["@"] = (Stacky stacky) {
 
+                "dealing with @".writeln;
+
                 if (stacky.operands.length < 2) {
                     throw new TypeSyntaxError (
                         "Need 2 arguments for \"*\" got: %s"
@@ -2855,9 +2864,32 @@ class Stacky {
                 stacky.pop ();
                 stacky.pop ();
                 
-                Cell cons = new Cell (Cons);
-                cons.val = [name, constr];
+                Cell cons = new Cell (Cons, [name, constr]);
+                "@ result is: %s".writefln (cons);
                 stacky.push (cons);
+                "@ push on stacky's operands".writeln;
+        };
+        
+        types ["|"] = (Stacky stacky) {
+
+                "dealing with |".writeln;
+
+                if (stacky.operands.length < 2) {
+                    throw new TypeSyntaxError (
+                        "Need 2 arguments for \"*\" got: %s"
+                        .format (stacky.operands.length));
+                }
+                Cell alt1 = stacky.index (1);
+                Cell alt2 = stacky.index (2);
+
+                stacky.pop ();
+                stacky.pop ();
+                
+                Cell prod = new Cell (Prod);
+                prod.val = [alt1, alt2];
+                "| result is: Prod %s".writefln ([alt1, alt2]);
+                stacky.push (prod);
+                "| push on stacky's operands".writeln;
         };
         
         Cell cTypes 
@@ -3406,8 +3438,8 @@ void testType () {
     auto stacky = new Stacky;
 
     stacky.eval (`
-        :[ :a Some @ 
-            None | 
+        :[ /a /Some @ 
+            /None | 
         :]
     `);
     "%s".writefln ('*'.repeat (30));
