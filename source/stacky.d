@@ -2,6 +2,7 @@ import std.stdio;
 import std.range;
 import std.conv;
 import std.string;
+import std.uni;
 import std.algorithm;
 import std.array;
 import std.digest.sha;
@@ -117,6 +118,18 @@ class UnknownSymbol : Exception {
     }
 }
 
+/** Error when parsing a type. */
+class TypeSyntaxError : Exception {
+    this (
+            string msg,
+            string file = __FILE__, 
+            size_t line = __LINE__, 
+            Throwable next = null)
+    {
+        super (msg, file, line, next);
+    }
+}
+
 /** Represents a Stacky type.  */
 class Type {
     /// The type name.
@@ -144,6 +157,15 @@ class Type {
                 "Cons": [ Type.var ("a"), Type.self (Type.var ("a"))] 
             ];
         */
+
+    /// A delegate to display the values of this type.
+    string delegate (Cell) valToString; 
+
+    /// A delegate to test the equality of values of this type.
+    bool delegate (Object) valOpEqual;
+
+    /// A delegate to compare values of this type.
+    int delegate (Object) valOpCmp;
 
     /// For procedure, the return types.
     Type [] outputs; 
@@ -182,6 +204,10 @@ class Type {
         instance.tvars = vars;
         return instance;
     }
+
+    override string toString () {
+        return "Type <%s>".format (name);
+    }
 }
 
 /// Generic "untyped" type.
@@ -206,6 +232,9 @@ Type
 /// Multimethods.
 Type MultiM;
 
+/// types
+Type Cons, Prod, Sum, Appl, TypeT;
+
 /// Initializes the native types.
 static this () {
     Any      = new Type ("Any",      true); 
@@ -220,6 +249,28 @@ static this () {
     Except   = new Type ("Except",   true);
     MultiM   = new Type ("MultiM",   true);
     ExeCtrl  = new Type ("ExeCtrl",  true);
+            
+    auto Cons  = new Type ("Cons");
+    auto Prod  = new Type ("Prod");
+    auto Sum   = new Type ("Sum");
+    auto Appl  = new Type ("Appl");
+    auto TypeT = new Type ("Type");
+
+    Cons.valToString = (Cell cell) {
+        return "Cons <%s>".format (cell.val.get!(Cell []));
+    };
+    Cons.valToString = (Cell cell) {
+        return "Prod <%s>".format (cell.val.get!(Cell []));
+    };
+    Cons.valToString = (Cell cell) {
+        return "Sum <%s>".format (cell.val.get!(Cell []));
+    };
+    Cons.valToString = (Cell cell) {
+        return "Appl <%s>".format (cell.val.get!(Cell []));
+    };
+    Cons.valToString = (Cell cell) {
+        return "Type <%s>".format (cell.val.get!(Cell []));
+    };
 }
 
 /** Represents a procedure.
@@ -378,6 +429,23 @@ class Procedure {
         return 1;
     }
 }
+
+/** A multimethod holds a dictionary of procedure sharing the same name 
+   but operating on different types.
+ */
+class MultiMethod {
+    /// The name of the multimethod.
+    string name;
+    
+    /// Input type names.
+    alias inTypeHash  = string;
+
+    /// Output type (on the stack) names.
+    alias outTypeHash = string;
+
+    Procedure [outTypeHash][inTypeHash] procs;
+}
+
 
 /** A cell on the stack.
  */
@@ -690,6 +758,10 @@ class Cell {
                     .format (exception.msg, 
                              exception.file,
                              exception.line);
+        }
+
+        if (type.valToString !is null) {
+            return type.valToString (this);
         }
 
         return "<unknown>";
@@ -1474,6 +1546,9 @@ class Stacky {
 
     /// Get to know the call depth to deal with exception handling.
     protected size_t callDepth = 0;
+
+    /// Stacky known types.
+    Type [][string] types;
     
     /// Returns the top of the operand stack.
     Cell top () {
@@ -2703,6 +2778,139 @@ class Stacky {
             stacky.evalProc (attempt, handler);
         };
 
+        Procedure.NativeType [string] types;
+            
+        bool isTypeVar (Cell cell) {
+            return cell.type == Symbol 
+                && cell.val.get!(string).startsWith (":")
+                && cell.val.get!(string).length > 1
+                ;
+        }
+
+        types [","] = (Stacky stacky) {
+            if (stacky.operands.length < 2) {
+                throw new TypeSyntaxError (
+                    "Need 2 arguments for \",\" got: %s"
+                    .format (stacky.operands.length));
+            }
+            Cell a = stacky.index (1);
+            Cell b = stacky.index (1);
+            
+            stacky.pop ();
+            stacky.pop ();
+
+            if (a.type == Appl) {
+                auto array = a.val.get!(Cell []);
+                array ~= b;
+                a.val  = array;
+                stacky.push (a);
+            } else {
+                auto array = Cell.arrayNew ();
+                array.val ~= a; 
+                array.val ~= b;
+                array.type = Appl;
+
+                stacky.push (array);
+            }
+        };
+
+        types ["*"] = (Stacky stacky) {
+
+            if (stacky.operands.length < 2) {
+                throw new TypeSyntaxError (
+                    "Need 2 arguments for \"*\" got: %s"
+                    .format (stacky.operands.length));
+            }
+            Cell a = stacky.index (1);
+            Cell b = stacky.index (1);
+            
+            stacky.pop ();
+            stacky.pop ();
+
+            if (a.type == Prod) {
+                auto array = a.val.get!(Cell []);
+                array ~= b;
+                a.val  = array;
+                stacky.push (a);
+            } else {
+                auto array = Cell.arrayNew ();
+                array.val ~= a; 
+                array.val ~= b;
+                array.type = Prod;
+
+                stacky.push (array);
+            }
+        };
+
+        types ["@"] = (Stacky stacky) {
+
+                if (stacky.operands.length < 2) {
+                    throw new TypeSyntaxError (
+                        "Need 2 arguments for \"*\" got: %s"
+                        .format (stacky.operands.length));
+                }
+                Cell name   = stacky.index (1);
+                Cell constr = stacky.index (2);
+
+                stacky.pop ();
+                stacky.pop ();
+                
+                Cell cons = new Cell (Cons);
+                cons.val = [name, constr];
+                stacky.push (cons);
+        };
+        
+        Cell cTypes 
+            = Cell.from!("symbol", string, Procedure.NativeType) (types);
+
+        foreach (sha1, pairs; cTypes.val.get!(Cell [][string])) {
+            pairs [1].funcName = pairs [0].val.get!string;
+        }
+
+        /// Type declaration analysis.
+        procs [":["] = (Stacky stacky) {
+
+            "starting :[".writeln ();
+
+            stacky.push (cTypes);
+            stacky.eval (`begin`);
+
+            bool isTypeVar (Cell cell) {
+                return cell.type == Symbol 
+                    && cell.val.get!(string).startsWith (":")
+                    && cell.val.get!(string).length > 1
+                    ;
+            }
+
+
+            Cell [] tokens;
+            Cell [] typeVars = [];
+            int level = 1;
+            
+            foreach (token; stacky.execution) {
+                if (token.type == Symbol && token.val == ":[") {
+                    level ++;
+                }
+
+                if (token.type == Symbol && token.val == ":]") 
+                {
+                    level --;
+                    
+                    if (level == 0) {
+                        break;
+                    }
+                }
+                tokens ~= token;
+            }
+
+            "typing: ops: %s".writefln (stacky.operands);
+            
+        };
+        
+        procs [":]"] = (Stacky stacky) {
+            stacky.eval (`end`);
+        };
+
         Cell cProcs 
             = Cell.from!("symbol", string, Procedure.NativeType) (procs);
 
@@ -3193,11 +3401,26 @@ void repl () {
     }
 }
 
+
+void testType () {
+    auto stacky = new Stacky;
+
+    stacky.eval (`
+        :[ :a Some @ 
+            None | 
+        :]
+    `);
+    "%s".writefln ('*'.repeat (30));
+    stacky.operands.writeln;
+    stacky.execution.dup.writeln;
+}
+
 void main () {
     grammarTest ();
     cellTest ();
     parseTest ();
-    stackyTest ();
+    //stackyTest ();
+    testType ();
 
     //repl ();
 }
