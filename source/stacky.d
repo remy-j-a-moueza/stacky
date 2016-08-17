@@ -235,6 +235,8 @@ Type MultiM;
 /// types
 Type Cons, Prod, Sum, Appl, TypeT;
 
+Procedure.NativeType [string] typeProcs;
+
 /// Initializes the native types.
 /+ TODO:
 this does not works.
@@ -263,7 +265,7 @@ static this () {
     auto TypeT = new Type ("Type");
 
     Cons.valToString = (Cell cell) {
-        return "Cons <%s>".format (cell.val.get!(Cell []));
+        return "Cons <%s>".format (cell.val.get!(Cell [string]));
     };
     Prod.valToString = (Cell cell) {
         return "Prod <%s>".format (cell.val.get!(Cell []));
@@ -276,6 +278,129 @@ static this () {
     };
     TypeT.valToString = (Cell cell) {
         return "Type <%s>".format (cell.val.get!(Cell []));
+    };
+        
+    bool isTypeVar (Cell cell) {
+        return cell.type == Symbol 
+            && cell.val.get!(string).startsWith (":")
+            && cell.val.get!(string).length > 1
+            ;
+    }
+
+    typeProcs [","] = (Stacky stacky) {
+        if (stacky.operands.length < 2) {
+            throw new TypeSyntaxError (
+                "Need 2 arguments for \",\" got: %s"
+                .format (stacky.operands.length));
+        }
+        Cell a = stacky.index (1);
+        Cell b = stacky.index (2);
+        
+        stacky.pop ();
+        stacky.pop ();
+
+        if (a.type == Appl) {
+            auto array = a.val.get!(Cell []);
+            array ~= b;
+            a.val  = array;
+            stacky.push (a);
+        } else {
+            auto array = Cell.arrayNew ();
+            array.val ~= a; 
+            array.val ~= b;
+            array.type = Appl;
+
+            stacky.push (array);
+        }
+    };
+
+    typeProcs ["*"] = (Stacky stacky) {
+
+        if (stacky.operands.length < 2) {
+            throw new TypeSyntaxError (
+                "Need 2 arguments for \"*\" got: %s"
+                .format (stacky.operands.length));
+        }
+        Cell a = stacky.index (1);
+        Cell b = stacky.index (2);
+        
+        stacky.pop ();
+        stacky.pop ();
+
+        if (a.type == Prod) {
+            auto array = a.val.get!(Cell []);
+            array ~= b;
+            a.val  = array;
+            stacky.push (a);
+        } else {
+            auto array = Cell.arrayNew ();
+            array.val ~= a; 
+            array.val ~= b;
+            array.type = Prod;
+
+            stacky.push (array);
+        }
+    };
+
+    typeProcs ["@"] = (Stacky stacky) {
+
+            "dealing with @".writeln;
+
+            if (stacky.operands.length < 2) {
+                throw new TypeSyntaxError (
+                    "Need 2 arguments for \"*\" got: %s"
+                    .format (stacky.operands.length));
+            }
+            Cell name   = stacky.index (1);
+            Cell constr = stacky.index (2);
+
+            stacky.pop ();
+            stacky.pop ();
+            
+            Cell cons = new Cell (Cons, [name.toString: constr]);
+            "@ result is: %s".writefln (cons);
+            stacky.push (cons);
+            "@ push on stacky's operands".writeln;
+    };
+    
+    typeProcs ["#"] = (Stacky stacky) {
+
+            "dealing with #".writeln;
+
+            if (stacky.operands.length < 1) {
+                throw new TypeSyntaxError (
+                    "Need 2 arguments for \"*\" got: %s"
+                    .format (stacky.operands.length));
+            }
+            Cell name   = stacky.index (1);
+            stacky.pop ();
+            
+            Cell cons = new Cell (Cons, [name.toString: Cell.arrayNew ()]);
+            "# result is: %s".writefln (cons);
+            stacky.push (cons);
+            "# push on stacky's operands".writeln;
+    };
+    
+    typeProcs ["|"] = (Stacky stacky) {
+
+            "dealing with |".writeln;
+
+            if (stacky.operands.length < 2) {
+                throw new TypeSyntaxError (
+                    "Need 2 arguments for \"*\" got: %s"
+                    .format (stacky.operands.length));
+            }
+            Cell alt1 = stacky.index (1);
+            Cell alt2 = stacky.index (2);
+
+            stacky.pop ();
+            stacky.pop ();
+            
+            Cell sum = new Cell (Sum);
+            sum.val = [alt1, alt2];
+            "| result is: Prod %s".writefln ([alt1, alt2]);
+            stacky.push (sum);
+            "| push on stacky's operands".writeln;
     };
 }
 
@@ -766,9 +891,10 @@ class Cell {
                              exception.line);
         }
 
-        //if (type.valToString !is null) {
-        //    return type.valToString (this);
-        //}
+        if (type.valToString !is null) {
+            return type.valToString (this);
+        }
+
         return "<Cell typed \"%s\">".format (type);
 
         //return "<unknown>";
@@ -2785,115 +2911,10 @@ class Stacky {
             stacky.evalProc (attempt, handler);
         };
 
-        Procedure.NativeType [string] types;
-            
-        bool isTypeVar (Cell cell) {
-            return cell.type == Symbol 
-                && cell.val.get!(string).startsWith (":")
-                && cell.val.get!(string).length > 1
-                ;
-        }
-
-        types [","] = (Stacky stacky) {
-            if (stacky.operands.length < 2) {
-                throw new TypeSyntaxError (
-                    "Need 2 arguments for \",\" got: %s"
-                    .format (stacky.operands.length));
-            }
-            Cell a = stacky.index (1);
-            Cell b = stacky.index (2);
-            
-            stacky.pop ();
-            stacky.pop ();
-
-            if (a.type == Appl) {
-                auto array = a.val.get!(Cell []);
-                array ~= b;
-                a.val  = array;
-                stacky.push (a);
-            } else {
-                auto array = Cell.arrayNew ();
-                array.val ~= a; 
-                array.val ~= b;
-                array.type = Appl;
-
-                stacky.push (array);
-            }
-        };
-
-        types ["*"] = (Stacky stacky) {
-
-            if (stacky.operands.length < 2) {
-                throw new TypeSyntaxError (
-                    "Need 2 arguments for \"*\" got: %s"
-                    .format (stacky.operands.length));
-            }
-            Cell a = stacky.index (1);
-            Cell b = stacky.index (2);
-            
-            stacky.pop ();
-            stacky.pop ();
-
-            if (a.type == Prod) {
-                auto array = a.val.get!(Cell []);
-                array ~= b;
-                a.val  = array;
-                stacky.push (a);
-            } else {
-                auto array = Cell.arrayNew ();
-                array.val ~= a; 
-                array.val ~= b;
-                array.type = Prod;
-
-                stacky.push (array);
-            }
-        };
-
-        types ["@"] = (Stacky stacky) {
-
-                "dealing with @".writeln;
-
-                if (stacky.operands.length < 2) {
-                    throw new TypeSyntaxError (
-                        "Need 2 arguments for \"*\" got: %s"
-                        .format (stacky.operands.length));
-                }
-                Cell name   = stacky.index (1);
-                Cell constr = stacky.index (2);
-
-                stacky.pop ();
-                stacky.pop ();
-                
-                Cell cons = new Cell (Cons, [name, constr]);
-                "@ result is: %s".writefln (cons);
-                stacky.push (cons);
-                "@ push on stacky's operands".writeln;
-        };
-        
-        types ["|"] = (Stacky stacky) {
-
-                "dealing with |".writeln;
-
-                if (stacky.operands.length < 2) {
-                    throw new TypeSyntaxError (
-                        "Need 2 arguments for \"*\" got: %s"
-                        .format (stacky.operands.length));
-                }
-                Cell alt1 = stacky.index (1);
-                Cell alt2 = stacky.index (2);
-
-                stacky.pop ();
-                stacky.pop ();
-                
-                Cell prod = new Cell (Prod);
-                prod.val = [alt1, alt2];
-                "| result is: Prod %s".writefln ([alt1, alt2]);
-                stacky.push (prod);
-                "| push on stacky's operands".writeln;
-        };
         
         Cell cTypes 
-            = Cell.from!("symbol", string, Procedure.NativeType) (types);
+            = Cell.from!("symbol", string, Procedure.NativeType) 
+                        (typeProcs);
 
         foreach (sha1, pairs; cTypes.val.get!(Cell [][string])) {
             pairs [1].funcName = pairs [0].val.get!string;
@@ -3439,7 +3460,7 @@ void testType () {
 
     stacky.eval (`
         :[ /a /Some @ 
-            /None | 
+              /None # | 
         :]
     `);
     "%s".writefln ('*'.repeat (30));
