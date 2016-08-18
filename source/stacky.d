@@ -233,7 +233,7 @@ Type
 Type MultiM;
 
 /// types
-Type Cons, Prod, Sum, Appl, TypeT;
+Type Cons, Prod, Sum, Appl, TypeT, Fun;
 
 Procedure.NativeType [string] typeProcs;
 
@@ -263,6 +263,7 @@ static this () {
     auto Sum   = new Type ("Sum");
     auto Appl  = new Type ("Appl");
     auto TypeT = new Type ("Type");
+    auto Fun   = new Type ("Fun");
 
     Cons.valToString = (Cell cell) {
         return "Cons <%s>".format (cell.val.get!(Cell [string]));
@@ -279,7 +280,10 @@ static this () {
     TypeT.valToString = (Cell cell) {
         return "Type <%s>".format (cell.val.get!(Cell []));
     };
-        
+    Fun.valToString = (Cell cell) {
+        return "Fun <%s>".format (cell.val.get!(Cell []));
+    };
+
     bool isTypeVar (Cell cell) {
         return cell.type == Symbol 
             && cell.val.get!(string).startsWith (":")
@@ -334,8 +338,8 @@ static this () {
             stacky.push (a);
         } else {
             auto array = Cell.arrayNew ();
-            array.val ~= a; 
-            array.val ~= b;
+            array.val ~= b; 
+            array.val ~= a;
             array.type = Prod;
 
             stacky.push (array);
@@ -348,7 +352,7 @@ static this () {
 
             if (stacky.operands.length < 2) {
                 throw new TypeSyntaxError (
-                    "Need 2 arguments for \"*\" got: %s"
+                    "Need 2 arguments for \"@\" got: %s"
                     .format (stacky.operands.length));
             }
             Cell name   = stacky.index (1);
@@ -369,7 +373,7 @@ static this () {
 
             if (stacky.operands.length < 1) {
                 throw new TypeSyntaxError (
-                    "Need 2 arguments for \"*\" got: %s"
+                    "Need 1 arguments for \"#\" got: %s"
                     .format (stacky.operands.length));
             }
             Cell name   = stacky.index (1);
@@ -387,7 +391,7 @@ static this () {
 
             if (stacky.operands.length < 2) {
                 throw new TypeSyntaxError (
-                    "Need 2 arguments for \"*\" got: %s"
+                    "Need 2 arguments for \"|\" got: %s"
                     .format (stacky.operands.length));
             }
             Cell alt1 = stacky.index (1);
@@ -398,9 +402,31 @@ static this () {
             
             Cell sum = new Cell (Sum);
             sum.val = [alt1, alt2];
-            "| result is: Prod %s".writefln ([alt1, alt2]);
+            "| result is: Sum %s".writefln ([alt1, alt2]);
             stacky.push (sum);
             "| push on stacky's operands".writeln;
+    };
+    
+    typeProcs ["->"] = (Stacky stacky) {
+
+            "dealing with ->".writeln;
+
+            if (stacky.operands.length < 2) {
+                throw new TypeSyntaxError (
+                    "Need 2 arguments for \"->\" got: %s"
+                    .format (stacky.operands.length));
+            }
+            Cell to   = stacky.index (1);
+            Cell from = stacky.index (2);
+
+            stacky.pop ();
+            stacky.pop ();
+            
+            Cell fun = new Cell (Fun);
+            fun.val = [from, to];
+            "-> result is: Prod %s".writefln ([from, to]);
+            stacky.push (fun);
+            "-> push on stacky's operands".writeln;
     };
 }
 
@@ -1682,6 +1708,12 @@ class Stacky {
 
     /// Stacky known types.
     Type [][string] types;
+
+    /** A delegate to evaluate symbols contextually based on their prefixes.
+      The index is a regular expression to match.
+      If the delegate returns true, exit evalSymbol immediately.
+      */
+    bool delegate (Stacky, Cell) [string] symbolContexts;
     
     /// Returns the top of the operand stack.
     Cell top () {
@@ -2729,7 +2761,7 @@ class Stacky {
 
             if (start <= limit) {
                 for (size_t i = start.val.get!long
-                    ; i < limit.val.get!long
+                    ; i <= limit.val.get!long
                     ; i += incr.val.get!long) 
                 {
                     stacky.push (Cell.from (i));
@@ -2743,6 +2775,8 @@ class Stacky {
                     stacky.push (Cell.from (i));
                     stacky.evalProc (proc);
                 }
+                stacky.push (limit);
+                stacky.evalProc (proc);
             }
         };
         
@@ -2924,44 +2958,46 @@ class Stacky {
         procs [":["] = (Stacky stacky) {
 
             "starting :[".writeln ();
+            
+            stacky.symbolContexts ["^:[A-Za-z0-9^:]+"] 
+                = (Stacky stacky, Cell sym) {
+                    "symbolContexts ^:[A-Za-z0-9^:]+".writeln;
+                    return true;
+            };
+            stacky.symbolContexts ["^[A-Z].*"]
+                = (Stacky stacky, Cell sym) {
+                    return true;
+            };
+
+            "new symbolContexts: %s".writefln (stacky.symbolContexts);
 
             stacky.push (cTypes);
-            stacky.eval (`begin`);
+            stacky.eval (`
+                begin
 
-            bool isTypeVar (Cell cell) {
-                return cell.type == Symbol 
-                    && cell.val.get!(string).startsWith (":")
-                    && cell.val.get!(string).length > 1
-                    ;
-            }
-
-
-            Cell [] tokens;
-            Cell [] typeVars = [];
-            int level = 1;
-            
-            foreach (token; stacky.execution) {
-                if (token.type == Symbol && token.val == ":[") {
-                    level ++;
-                }
-
-                if (token.type == Symbol && token.val == ":]") 
-                {
-                    level --;
-                    
-                    if (level == 0) {
-                        break;
-                    }
-                }
-                tokens ~= token;
-            }
-
-            "typing: ops: %s".writefln (stacky.operands);
-            
+                /__typedecl_depth__ where 
+                    { drop 
+                      /__typedecl_depth__ __typedecl_depth__ 1 + def } 
+                    { /__typedecl_depth__ 1 def } 
+                if-else`);
         };
         
         procs [":]"] = (Stacky stacky) {
+            stacky.eval (`
+                /__typedecl_depth__ __typedecl_depth__ 1 - def
+                __typedecl_depth__
+            `);
+            Cell level = stacky.top ();
+            stacky.pop ();
             stacky.eval (`end`);
+
+            ":] level = %s".writefln (level);
+
+            if (level.val.get!long == 0) {
+                "removing symbolContexts for types".writeln;
+                stacky.symbolContexts.remove ("^:[A-Za-z0-9^:]+");
+                stacky.symbolContexts.remove ("^[A-Z].*");
+            }
         };
 
         Cell cProcs 
@@ -3111,11 +3147,33 @@ class Stacky {
     }
 
     /// Evaluate a symbol.
-    void evalSymbol (Cell op) {
+    void evalSymbol (Cell op, bool useContext = true) {
+        string symbol = op.val.get!(string);
 
-        if (op.val.get!(string).startsWith ("/")
-        && !op.val.get!(string).startsWith ("//")
-        &&  op.val.get!(string).length > 1)
+        if (useContext) {
+            "evalSymbol: useContext = true".writeln;
+            // Search for a context.
+            auto keys = sort (symbolContexts.keys);
+
+            "keys are: %s".writefln (keys.array);
+            
+            foreach (rex; keys) {
+                "symbol: %s".writefln (rex);
+                if (symbol.matchFirst (regex (rex))) {
+                    "symbol: %s matches!!!".writefln (rex);
+                    auto dg = symbolContexts [rex];
+
+                    // When matching call the delegate.
+                    if (dg (this, op)) {
+                        return;
+                    }
+                }
+            }
+        }
+
+        if (symbol.startsWith ("/")
+        && !symbol.startsWith ("//")
+        &&  symbol.length > 1)
         {
             return;
         }
@@ -3123,11 +3181,11 @@ class Stacky {
         bool immediate = false; 
         Cell match     = null;
 
-        if (op.val.get!(string).startsWith ("//")
-        &&  op.val.get!(string).length > 2)
+        if (symbol.startsWith ("//")
+        &&  symbol.length > 2)
         {
             immediate = true;
-            match     = lookup (Cell.fromSymbol (op.val.get!(string) [2 .. $]));
+            match     = lookup (Cell.fromSymbol (symbol [2 .. $]));
         } else {
                 
             match     = lookup (op);
@@ -3444,10 +3502,32 @@ void stackyTest () {
 void repl () {
     auto stacky = new Stacky;
     
+    // Stores command spanning multiple lines, because of unclose '{'.
+    string buffer = ""; 
+    // '{', '}' nesting level.
+    int     level = 0;
+
     `stacky> `.write;
+
     foreach (line; stdin.byLine) {
+        // Check if the parenthesis are balanced.
+        foreach (ch; line) {
+            if (ch == '{') { level ++; continue; }
+            if (ch == '}') { level --; }
+        }
+
+        if (level != 0) {
+            // Unfinished line: buffer it and keep collecting.
+            buffer ~= line ~ "\n";
+            continue;
+        }
+
+        // Finished line.
         string code = `#file "<stdin>" #function "main"` ~ "\n" 
-                    ~ line.to!string;
+                    ~ buffer ~ line.to!string;
+        // reset the buffer for next instructions.
+        buffer = "";
+
         stacky.eval (code, "main");
         stacky.eval ("print-stack");
         `stacky> `.write;
@@ -3459,8 +3539,8 @@ void testType () {
     auto stacky = new Stacky;
 
     stacky.eval (`
-        :[ /a /Some @ 
-              /None # | 
+        :[ :a Some @ 
+              None # | 
         :]
     `);
     "%s".writefln ('*'.repeat (30));
@@ -3475,5 +3555,5 @@ void main () {
     //stackyTest ();
     testType ();
 
-    //repl ();
+    repl ();
 }
