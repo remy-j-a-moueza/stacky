@@ -48,9 +48,9 @@ StackyLang:
     Sign       <- '-' / '+'
 
     # Directives
-    Directive < ~"#file" String
-              / ~"#line" Integer
-              / ~"#function" String
+    Directive < ~"\\file" String
+              / ~"\\line" Integer
+              / ~"\\function" String
     
     # Space related.
     Spacing    <- :(Comment / " " / "\t")*
@@ -72,13 +72,13 @@ void grammarTest () {
     tester.assertSimilar (`true`,     `Program -> Word -> Bool`);  
     
     tester.assertSimilar (
-        `#line 13`, 
+        `\line 13`, 
         `Program -> Word -> Directive -> Integer`);
     tester.assertSimilar (
-        `#file "the-file.txt"`, 
+        `\file "the-file.txt"`, 
         `Program -> Word -> Directive -> String`);
     tester.assertSimilar (
-        `#function "the-function"`, 
+        `\function "the-function"`, 
         `Program -> Word -> Directive -> String`);
 }
 
@@ -237,9 +237,17 @@ Type
 Type MultiM;
 
 /// types
-Type Cons, Prod, Sum, Appl, TypeT, Fun;
+Type Cons, Prod, Sum, Appl, TypeT, Fun, Field;
 
 Procedure.NativeType [string] typeProcs;
+
+/// Returns true if the symbol respects the type variable format.
+bool isTypeVar (Cell cell) {
+    return cell.type == Symbol 
+        && cell.val.get!(string).startsWith (":")
+        && cell.val.get!(string).length > 1
+        ;
+}
 
 /// Initializes the native types.
 static this () {
@@ -591,12 +599,13 @@ static this () {
     };
         
     
-    auto Cons  = new Type ("Cons");
-    auto Prod  = new Type ("Prod");
-    auto Sum   = new Type ("Sum");
-    auto Appl  = new Type ("Appl");
-    auto TypeT = new Type ("Type");
-    auto Fun   = new Type ("Fun");
+    Cons  = new Type ("Cons");
+    Prod  = new Type ("Prod");
+    Sum   = new Type ("Sum");
+    Appl  = new Type ("Appl");
+    TypeT = new Type ("Type");
+    Fun   = new Type ("Fun");
+    Field = new Type ("Field");
 
     Cons.valToString = (Cell cell) {
         return "Cons <%s>".format (cell.val.get!(Cell [string]));
@@ -616,13 +625,10 @@ static this () {
     Fun.valToString = (Cell cell) {
         return "Fun <%s>".format (cell.val.get!(Cell []));
     };
+    Field.valToString = (Cell cell) {
+        return "Field <%s>".format (cell.val.get!(Cell []));
+    };
 
-    bool isTypeVar (Cell cell) {
-        return cell.type == Symbol 
-            && cell.val.get!(string).startsWith (":")
-            && cell.val.get!(string).length > 1
-            ;
-    }
 
     typeProcs [","] = (Stacky stacky) {
         if (stacky.operands.length < 2) {
@@ -680,9 +686,6 @@ static this () {
     };
 
     typeProcs ["@"] = (Stacky stacky) {
-
-            "dealing with @".writeln;
-
             if (stacky.operands.length < 2) {
                 throw new TypeSyntaxError (
                     "Need 2 arguments for \"@\" got: %s"
@@ -695,33 +698,23 @@ static this () {
             stacky.pop ();
             
             Cell cons = new Cell (Cons, [name.toString: constr]);
-            "@ result is: %s".writefln (cons);
             stacky.push (cons);
-            "@ push on stacky's operands".writeln;
     };
     
-    typeProcs ["#"] = (Stacky stacky) {
-
-            "dealing with #".writeln;
-
+    typeProcs ["@-"] = (Stacky stacky) {
             if (stacky.operands.length < 1) {
                 throw new TypeSyntaxError (
-                    "Need 1 arguments for \"#\" got: %s"
+                    "Need 1 arguments for \"@-\" got: %s"
                     .format (stacky.operands.length));
             }
             Cell name   = stacky.index (1);
             stacky.pop ();
             
             Cell cons = new Cell (Cons, [name.toString: Cell.arrayNew ()]);
-            "# result is: %s".writefln (cons);
             stacky.push (cons);
-            "# push on stacky's operands".writeln;
     };
     
     typeProcs ["|"] = (Stacky stacky) {
-
-            "dealing with |".writeln;
-
             if (stacky.operands.length < 2) {
                 throw new TypeSyntaxError (
                     "Need 2 arguments for \"|\" got: %s"
@@ -735,15 +728,10 @@ static this () {
             
             Cell sum = new Cell (Sum);
             sum.val = [alt1, alt2];
-            "| result is: Sum %s".writefln ([alt1, alt2]);
             stacky.push (sum);
-            "| push on stacky's operands".writeln;
     };
     
     typeProcs ["->"] = (Stacky stacky) {
-
-            "dealing with ->".writeln;
-
             if (stacky.operands.length < 2) {
                 throw new TypeSyntaxError (
                     "Need 2 arguments for \"->\" got: %s"
@@ -757,9 +745,24 @@ static this () {
             
             Cell fun = new Cell (Fun);
             fun.val = [from, to];
-            "-> result is: Prod %s".writefln ([from, to]);
             stacky.push (fun);
-            "-> push on stacky's operands".writeln;
+    };
+    
+    typeProcs ["#"] = (Stacky stacky) {
+            if (stacky.operands.length < 2) {
+                throw new TypeSyntaxError (
+                    "Need 2 arguments for \"->\" got: %s"
+                    .format (stacky.operands.length));
+            }
+            Cell name = stacky.index (1);
+            Cell type = stacky.index (2);
+
+            stacky.pop ();
+            stacky.pop ();
+            
+            Cell field = new Cell (Field);
+            field.val = [type, name];
+            stacky.push (field);
     };
 }
 
@@ -1429,13 +1432,13 @@ Cell [] parse (string input) {
                               .withLineNo   (lineCount);
                 break;
             case "StackyLang.Directive":
-                if ("#file" == word.matches [0]) {
+                if ("\\file" == word.matches [0]) {
                     fileName = word.matches [1];
                 } else 
-                if ("#line" == word.matches [0]) {
+                if ("\\line" == word.matches [0]) {
                     lineCount = (word.matches [1].to!size_t) -1;
                 } else 
-                if ("#function" == word.matches [0]) {
+                if ("\\function" == word.matches [0]) {
                     funcName = word.matches [1];
                 }
                 break;
@@ -1457,7 +1460,7 @@ void parseTest () {
 
     tokens = `
         clear-stack
-        #file "<stdin>" #line 1
+        \file "<stdin>" \line 1
         "hello, world!" 
         writeln;
         `.parse;
@@ -1471,6 +1474,7 @@ void parseTest () {
 
     assert (tokens [2].lineNo   == "2");
 }
+
 
 /// Return the top of the stack.
 Cell top (Cell [] stack) {
@@ -3086,11 +3090,8 @@ class Stacky {
         /// Type declaration analysis.
         procs [":["] = (Stacky stacky) {
 
-            "starting :[".writeln ();
-            
             stacky.symbolContexts ["^:[A-Za-z0-9^:]+"] 
                 = (Stacky stacky, Cell sym) {
-                    "symbolContexts ^:[A-Za-z0-9^:]+".writeln;
                     return true;
             };
             stacky.symbolContexts ["^[A-Z].*"]
@@ -3098,18 +3099,14 @@ class Stacky {
                     return true;
             };
 
-            "new symbolContexts: %s".writefln (stacky.symbolContexts);
-
             stacky.addModule ("__builtin_parse_types__", cTypes);
             typeDepth ++;
         };
         
         procs [":]"] = (Stacky stacky) {
             typeDepth --;
-            ":] level = %s".writefln (typeDepth);
 
             if (typeDepth == 0) {
-                "removing symbolContexts for types".writeln;
                 stacky.symbolContexts.remove ("^:[A-Za-z0-9^:]+");
                 stacky.symbolContexts.remove ("^[A-Z].*");
 
@@ -3406,6 +3403,35 @@ class Stacky {
             throw e; 
         }
     }
+
+
+    /** Analyses the buliding blocks from the input cell and returns a cleaned
+     * up type. */
+    void createType (string name, Cell cell) {
+        Type res = new Type (name);
+        
+        ExecutionStack nodes = new ExecutionStack;
+        nodes.insert ([cell]);
+
+        foreach (node; nodes) {
+            if (node.type == Cons) {
+            }
+            else if (node.type == Appl) {
+            }
+            else if (node.type == Sum) {
+            }
+            else if (node.type == Prod) {
+            }
+            else if (node.type == Fun) {
+            }
+            else if (node.type == Field) {
+            }
+            else if (node.type == TypeT) {
+            }
+        }
+
+        
+    }
 }
 
 void stackyTest () {
@@ -3685,7 +3711,7 @@ void repl () {
         }
 
         // Finished line.
-        string code = `#file "<stdin>" #function "main"` ~ "\n" 
+        string code = `\file "<stdin>" \function "main"` ~ "\n" 
                     ~ buffer ~ line.to!string;
         // reset the buffer for next instructions.
         buffer = "";
@@ -3702,9 +3728,60 @@ void testType () {
 
     stacky.eval (`
         :[ :a Some @ 
-              None # | 
+              None @- | 
         :]
     `);
+    assert (stacky.top.toString 
+            == `Sum <[Cons <["None":()]>, Cons <["Some"::a]>]>`,
+            stacky.top.toString);
+
+    stacky.eval (`
+        clear-stack 
+        :[ 
+           Nil  @- 
+           :a List , Cons @ |
+
+        :]
+    `);
+    assert (stacky.top.toString
+            == `Sum <[Cons <["Cons":Appl <[List, :a]>]>, Cons <["Nil":()]>]>`,
+            stacky.top.toString);
+
+    stacky.eval (`
+        clear-stack 
+        :[ Int Int * Int -> :]
+    `);
+    assert (stacky.top.toString
+            == `Fun <[Prod <[Int, Int]>, Int]>`,
+            stacky.top.toString);
+
+    stacky.eval (`
+        clear-stack 
+        :[ :a :a List , * :a List , -> :]
+    `);
+    assert (stacky.top.toString
+            == `Fun <[Prod <[:a, Appl <[List, :a]>]>, Appl <[List, :a]>]>`,
+            stacky.top.toString);
+
+    // This makes no sense as long as we do not support constraint types.
+    stacky.eval (`
+        clear-stack 
+        :[ :a /m , :a :b /m , ->  *   :b /m , -> :] 
+    `);
+    assert (stacky.top.toString
+            == `Fun <[Prod <[Appl <[m, :a]>, `
+                          ~ `Fun <[:a, Appl <[m, :b]>]>]>, `
+                   ~ `Appl <[m, :b]>]>`,
+             stacky.top.toString);
+    
+    stacky.eval (`
+        clear-stack 
+        :[ Int /id # String /name # * :]
+    `);
+    assert (stacky.top.toString
+            == `Prod <[Field <[Int, id]>, Field <[String, name]>]>`,
+            stacky.top.toString);
+
     "%s".writefln ('*'.repeat (30));
     stacky.operands.writeln;
     stacky.execution.dup.writeln;
