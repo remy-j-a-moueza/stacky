@@ -162,10 +162,14 @@ class Type {
     string delegate (Cell) valToString = null; 
 
     /// A delegate to test the equality of values of this type.
-    bool delegate (Object) valOpEqual = null;
+    bool delegate (Cell, Object) valOpEqual = null;
 
     /// A delegate to compare values of this type.
-    int delegate (Object) valOpCmp = null;
+    int delegate (Cell, Object) valOpCmp = null;
+
+    /** A delegate that returns a hash string to be used as keys in stacky
+     * dicts. */
+    string delegate (Cell) valToHashString = null;
 
     /// For procedure, the return types.
     Type [] outputs; 
@@ -238,12 +242,6 @@ Type Cons, Prod, Sum, Appl, TypeT, Fun;
 Procedure.NativeType [string] typeProcs;
 
 /// Initializes the native types.
-/+ TODO:
-this does not works.
-The procs[] delegates are not using types properly initialized.
-Move them either elsewhere or move the procs functions in a `static this()`
-method.
- +/
 static this () {
     Any      = new Type ("Any",      true); 
     Integer  = new Type ("Integer",  true); 
@@ -257,7 +255,342 @@ static this () {
     Except   = new Type ("Except",   true);
     MultiM   = new Type ("MultiM",   true);
     ExeCtrl  = new Type ("ExeCtrl",  true);
+
+
+    Integer.valToString = (Cell cell) {
+        return cell.val.get!(long).to!string ~ "i";
+    };
+
+    Floating.valToString = (Cell cell) {
+        return cell.val.get!(double).to!string ~ "f";
+    };
+
+    String.valToString = (Cell cell) {
+        return "\"" ~ cell.val.get!(string) ~ "\"";
+    };
+
+
+    Symbol.valToString = (Cell cell) {
+        auto symbol = cell.val.get!(string); 
+
+        if (symbol.startsWith ("/")
+        &&  symbol.length > 1) {
+            return symbol [1..$];
+        } 
+        else if (symbol.startsWith ("//")
+        &&      symbol.length > 2) {
+            return symbol [2..$];
+        } 
+        else {
+            return symbol;
+        }
+    };
+
+    Bool.valToString = (Cell cell) {
+        return cell.val.get!(bool) ? "true" : "false";
+    };
+
+    Array.valToString = (Cell cell) {
+        return "(%s)".format (
+                    cell.val.get!(Cell []).map!(to!string)
+                            .array
+                            .join (", "));
+    };
+
+    Dict.valToString = (Cell cell) {
+        string [] repr;
+        
+        foreach (k, v; cell.val.get!(Cell [][string])) {
+            repr ~= "%s: %s".format (v [0], v [1]);
+        }
+        
+        return "[%s]".format (repr.join (", "));
+    };
+
+    Proc.valToString = (Cell cell) {
+        return cell.val.get!(Procedure).toString;
+    };
+
+    Except.valToString = (Cell cell) {
+        auto exception = cell.val.get!(Exception);
+
+        return "Exception(%s, %s, %s)"
+                .format (exception.msg, 
+                         exception.file,
+                         exception.line);
+    };
+
+    MultiM.valToString = (Cell cell) {
+        return "MultiM";
+    };
             
+    ExeCtrl.valToString = (Cell cell) {
+        return "ExeCtrl %s".format (cell.val.get!(string));
+    };
+
+    bool delegate (Cell, Object) numOpEqual = (Cell self, Object obj) {
+        Cell cell = cast (Cell) obj;
+        
+        if (cell is null) {
+            return false;
+        }
+
+        if (cell.type == Integer || cell.type == Floating) {
+            return self.val == cell.val;
+        } 
+        return false;
+    };
+
+    Integer.valOpEqual  = numOpEqual;
+    Floating.valOpEqual = numOpEqual;
+
+    bool delegate (Cell, Object) simpleOpEqual = (Cell self, Object obj) {
+        Cell cell = cast (Cell) obj;
+        
+        if (cell is null || self.type != cell.type) {
+            return false;
+        }
+
+        return self.val == cell.val;
+    };
+
+    String.valOpEqual = simpleOpEqual;
+    Symbol.valOpEqual = simpleOpEqual;
+    Bool.valOpEqual   = simpleOpEqual;
+
+    Array.valOpEqual  = (Cell self, Object obj) {
+        Cell cell = cast (Cell) obj;
+        
+        if (cell is null || self.type != cell.type) {
+            return false;
+        }
+
+        auto ownArray = self.val.get!(Cell []);
+        auto itsArray = cell.val.get!(Cell []);
+
+        if (ownArray.length != itsArray.length) {
+            return false;
+        }
+        
+        for (size_t i = 0; i < ownArray.length; ++ i) {
+            if (ownArray [i] != itsArray [i]) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    Dict.valOpEqual  = (Cell self, Object obj) {
+        Cell cell = cast (Cell) obj;
+        
+        if (cell is null || self.type != cell.type) {
+            return false;
+        }
+        
+        auto ownDict = self.val.get!(Cell [][string]);
+        auto itsDict = cell.val.get!(Cell [][string]);
+
+        if (ownDict.keys.length != itsDict.keys.length) {
+            return false;
+        }
+        for (size_t i = 0; i < ownDict.values.length; ++ i) {
+            if (ownDict.values [i][0] != itsDict.values [i][0]
+            ||  ownDict.values [i][1] != itsDict.values [i][1])
+            {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    bool simpleParamOpEqual (T) (Cell self, Object obj) {
+        Cell cell = cast (Cell) obj;
+        
+        if (cell is null || self.type != cell.type) {
+            return false;
+        }
+
+        return self.val.get!T == cell.val.get!T;
+    }
+
+    Proc.valOpEqual = (Cell self, Object obj) {
+        return simpleParamOpEqual!Procedure (self, obj);
+    };
+    
+    Except.valOpEqual = (Cell self, Object obj) {
+        return simpleParamOpEqual!Exception (self, obj);
+    };
+    
+    
+    Integer.valOpCmp = (Cell self, Object obj) {
+        Cell cell = cast (Cell) obj;
+        
+        if (cell is null) {
+            return -1;
+        }
+
+        auto ownVal = self.val.get!long;
+        
+        if (cell.type == Integer) {
+            auto itsVal = cell.val.get!long;
+
+            return ownVal == itsVal
+                 ? 0
+                 : ownVal < itsVal ? -1 : 1;
+        }
+        if (cell.type == Floating) {
+            auto itsVal = cell.val.get!double;
+
+            return ownVal == itsVal
+                 ? 0
+                 : ownVal < itsVal ? -1 : 1;
+        }
+        return -1;
+    };
+
+    Floating.valOpCmp = (Cell self, Object obj) {
+        Cell cell = cast (Cell) obj;
+        
+        if (cell is null) {
+            return -1;
+        }
+        
+        auto ownVal = self.val.get!double;
+        
+        if (cell.type == Integer) {
+            auto itsVal = cell.val.get!long;
+
+            return ownVal == itsVal
+                 ? 0
+                 : ownVal < itsVal ? -1 : 1;
+        }
+        if (cell.type == Floating) {
+            auto itsVal = cell.val.get!double;
+
+            return ownVal == itsVal
+                 ? 0
+                 : ownVal < itsVal ? -1 : 1;
+        }
+        return -1;
+    };
+
+    int delegate (Cell, Object) simpleOpCmp = (Cell self, Object obj) {
+        Cell cell = cast (Cell) obj;
+        
+        if (cell is null) {
+            return -1;
+        }
+
+        if (self.type != cell.type) {
+            return self.type < cell.type ? -1 : 1;
+        }
+
+        return self.val == cell.val
+             ? 0
+             : self.val <  cell.val ? -1 : 1;
+    };
+
+    String.valOpCmp = simpleOpCmp; 
+    Symbol.valOpCmp = simpleOpCmp; 
+    Bool.valOpCmp   = simpleOpCmp; 
+
+    Array.valOpCmp = (Cell self, Object obj) {
+        Cell cell = cast (Cell) obj;
+        
+        if (cell is null) {
+            return -1;
+        }
+
+        if (self.type != cell.type) {
+            return self.type < cell.type ? -1 : 1;
+        }
+            
+        auto ownVal = self.val.get!(Cell []);
+        auto itsVal = cell.val.get!(Cell []);
+
+        if (ownVal.length != itsVal.length) {
+            return ownVal.length < itsVal.length ? -1 : 1;
+        }
+        
+        for (size_t i = 0; i < ownVal.length; ++ i) {
+            int cmp = ownVal [i].opCmp (itsVal [i]);
+            
+            if (cmp != 0) {
+                return cmp;
+            }
+        }
+        return 0;
+    };
+    
+    Dict.valOpCmp = (Cell self, Object obj) {
+        Cell cell = cast (Cell) obj;
+        
+        if (cell is null) {
+            return -1;
+        }
+
+        if (self.type != cell.type) {
+            return self.type < cell.type ? -1 : 1;
+        }
+        auto ownVal = self.val.get!(Cell [][string]);
+        auto itsVal = cell.val.get!(Cell [][string]);
+
+        if (ownVal.keys.length != itsVal.keys.length) {
+            return ownVal.keys.length < itsVal.keys.length
+                 ? -1 : 1;
+        }
+        for (size_t i = 0; i < ownVal.values.length; ++ i) {
+            int cmpK = ownVal.values [i][0]
+                             .opCmp (itsVal.values [i][0]);
+            int cmpV = ownVal.values [i][1]
+                             .opCmp (itsVal.values [i][1]);
+
+            if (cmpK != 0) {
+                return cmpK;
+            }
+            if (cmpV != 0) {
+                return cmpV;
+            }
+        }
+        return true;
+    };
+
+    Proc.valOpCmp = (Cell self, Object obj) {
+        Cell cell = cast (Cell) obj;
+        
+        if (cell is null) {
+            return -1;
+        }
+
+        if (self.type != cell.type) {
+            return self.type < cell.type ? -1 : 1;
+        }
+
+        auto ownVal = self.val.get!(Procedure);
+        auto itsVal = cell.val.get!(Procedure);
+
+        return ownVal.opCmp (itsVal);
+    };
+    
+    Except.valOpCmp = (Cell self, Object obj) {
+        Cell cell = cast (Cell) obj;
+        
+        if (cell is null) {
+            return -1;
+        }
+
+        if (self.type != cell.type) {
+            return self.type < cell.type ? -1 : 1;
+        }
+        auto ownVal = self.val.get!(Exception);
+        auto itsVal = cell.val.get!(Exception);
+
+        return ownVal == itsVal
+             ? 0
+             : ownVal.msg < itsVal.msg ? -1 : 1;
+    };
+        
+    
     auto Cons  = new Type ("Cons");
     auto Prod  = new Type ("Prod");
     auto Sum   = new Type ("Sum");
@@ -429,6 +762,7 @@ static this () {
             "-> push on stacky's operands".writeln;
     };
 }
+
 
 /** Represents a procedure.
   They are of two types: 
@@ -839,7 +1173,7 @@ class Cell {
             Cell key = Cell.from!(stringKind) (k); 
             Cell val = Cell.from!(stringKind) (v);
 
-            value [key.sha1Hash] = [key, val];
+            value [key.stringHash] = [key, val];
         }
 
         return new Cell (Dict, value);
@@ -855,68 +1189,6 @@ class Cell {
     
     /// Return a string representation.
     override string toString () {
-        if (type == Integer) {
-            return val.get!(long).to!string ~ "i";
-        } 
-
-        else if (type == Floating) {
-            return val.get!(double).to!string ~ "f";
-        }
-
-        else if (type == String) { 
-            return "\"" ~ val.get!(string) ~ "\"";
-        }
-
-        else if (type == Symbol) {
-            auto symbol = val.get!(string); 
-
-            if (symbol.startsWith ("/")
-            &&  symbol.length > 1) {
-                return symbol [1..$];
-            } 
-            else if (symbol.startsWith ("//")
-            &&      symbol.length > 2) {
-                return symbol [2..$];
-            } 
-            else {
-                return symbol;
-            }
-        }
-
-        else if (type == Bool) {
-            return val.get!(bool) ? "true" : "false";
-        }
-
-        else if (type == Array) {
-            return "(%s)".format (
-                        val.get!(Cell []).map!(to!string)
-                           .array
-                           .join (", "));
-        }
-
-        else if (type == Dict) {
-            string [] repr;
-            
-            foreach (k, v; val.get!(Cell [][string])) {
-                repr ~= "%s: %s".format (v [0], v [1]);
-            }
-            
-            return "[%s]".format (repr.join (", "));
-        }
-
-        else if (type == Proc) {
-            return val.get!(Procedure).toString;
-        }
-
-        else if (type == Except) {
-            auto exception = val.get!(Exception);
-
-            return "Exception(%s, %s, %s)"
-                    .format (exception.msg, 
-                             exception.file,
-                             exception.line);
-        }
-
         if (type.valToString !is null) {
             return type.valToString (this);
         }
@@ -934,61 +1206,8 @@ class Cell {
             return false;
         }
         
-        if (type == Integer || type == Floating) {
-            if (cell.type == Integer || cell.type == Floating) {
-                return val == cell.val;
-            } 
-        }
-
-        if (type != cell.type) {
-            return false;
-        }
-
-        if (type == String 
-        ||  type == Symbol
-        ||  type == Bool) {
-            return val == cell.val;
-        }
-
-       if (type == Array) {
-            auto ownArray =      val.get!(Cell []);
-            auto itsArray = cell.val.get!(Cell []);
-
-            if (ownArray.length != itsArray.length) {
-                return false;
-            }
-            
-            for (size_t i = 0; i < ownArray.length; ++ i) {
-                if (ownArray [i] != itsArray [i]) {
-                    return false;
-                }
-            }
-            return true;
-       }
-
-       if (type == Dict) {
-           auto ownDict =      val.get!(Cell [][string]);
-           auto itsDict = cell.val.get!(Cell [][string]);
-
-            if (ownDict.keys.length != itsDict.keys.length) {
-                return false;
-            }
-            for (size_t i = 0; i < ownDict.values.length; ++ i) {
-                if (ownDict.values [i][0] != itsDict.values [i][0]
-                ||  ownDict.values [i][1] != itsDict.values [i][1])
-                {
-                    return false;
-                }
-            }
-            return true;
-       }
-            
-        if (type == Proc) {
-            return val.get!(Procedure) == cell.val.get!(Procedure);
-        }
-
-        if (type == Except) {
-            return val.get!(Exception) == cell.val.get!(Exception);
+        if (type.valOpEqual !is null) {
+            return type.valOpEqual (this, obj);
         }
 
         return false;
@@ -1002,120 +1221,18 @@ class Cell {
             return -1;
         }
 
-        if (type == Integer) {
-            auto ownVal = val.get!long;
-            
-            if (cell.type == Integer) {
-                auto itsVal = cell.val.get!long;
-
-                return ownVal == itsVal
-                     ? 0
-                     : ownVal < itsVal ? -1 : 1;
-            }
-            if (cell.type == Floating) {
-                auto itsVal = cell.val.get!double;
-
-                return ownVal == itsVal
-                     ? 0
-                     : ownVal < itsVal ? -1 : 1;
-            }
-        }
-
-        if (type == Floating) {
-            auto ownVal = val.get!double;
-            
-            if (cell.type == Integer) {
-                auto itsVal = cell.val.get!long;
-
-                return ownVal == itsVal
-                     ? 0
-                     : ownVal < itsVal ? -1 : 1;
-            }
-            if (cell.type == Floating) {
-                auto itsVal = cell.val.get!double;
-
-                return ownVal == itsVal
-                     ? 0
-                     : ownVal < itsVal ? -1 : 1;
-            }
-        }
-        
-        if (type != cell.type) {
-            return type < cell.type ? -1 : 1;
-        }
-
-        if (type == String
-        ||  type == Symbol
-        ||  type == Bool)
-        {
-            return val == cell.val
-                 ? 0
-                 : val <  cell.val ? -1 : 1;
-        }
-
-        if (type == Array) {
-            auto ownVal =      val.get!(Cell []);
-            auto itsVal = cell.val.get!(Cell []);
-
-            if (ownVal.length != itsVal.length) {
-                return ownVal.length < itsVal.length ? -1 : 1;
-            }
-            
-            for (size_t i = 0; i < ownVal.length; ++ i) {
-                int cmp = ownVal [i].opCmp (itsVal [i]);
-                
-                if (cmp != 0) {
-                    return cmp;
-                }
-            }
-            return 0;
-        }
-
-        if (type == Dict) {
-            auto ownVal =      val.get!(Cell [][string]);
-            auto itsVal = cell.val.get!(Cell [][string]);
-
-            if (ownVal.keys.length != itsVal.keys.length) {
-                return ownVal.keys.length < itsVal.keys.length
-                     ? -1 : 1;
-            }
-            for (size_t i = 0; i < ownVal.values.length; ++ i) {
-                int cmpK = ownVal.values [i][0]
-                                 .opCmp (itsVal.values [i][0]);
-                int cmpV = ownVal.values [i][1]
-                                 .opCmp (itsVal.values [i][1]);
-
-                if (cmpK != 0) {
-                    return cmpK;
-                }
-                if (cmpV != 0) {
-                    return cmpV;
-                }
-            }
-            return true;
-        }
-            
-        if (type == Proc) {
-            auto ownVal =      val.get!(Procedure);
-            auto itsVal = cell.val.get!(Procedure);
-
-            return ownVal.opCmp (itsVal);
-        }
-            
-        if (type == Except) {
-            auto ownVal =      val.get!(Exception);
-            auto itsVal = cell.val.get!(Exception);
-
-            return ownVal == itsVal
-                 ? 0
-                 : ownVal.msg < itsVal.msg ? -1 : 1;
+        if (type.valOpCmp !is null) {
+            return type.valOpCmp (this, obj);
         }
 
         return 1;
     }
 
-    /// Returns a sha1Hash as a string, used for dictionaries.
-    string sha1Hash () {
+    /// Returns a hash string, used for dictionaries.
+    string stringHash () {
+        if (type.valToHashString !is null) {
+            return type.valToHashString (this);
+        }
         return toString.sha1Of.toHexString.dup ;
     }
 
@@ -1131,7 +1248,7 @@ class Cell {
             throw new InvalidCellType ("lookup: we are not a Dict");
         }
 
-        Cell []* match = symbol.sha1Hash in val.get!(Cell [][string]);
+        Cell []* match = symbol.stringHash in val.get!(Cell [][string]);
 
         if (! match) {
             return null;
@@ -1146,7 +1263,7 @@ class Cell {
             throw new InvalidCellType ("lookup: we are not a Dict");
         }
 
-        Cell []* match = symbol.sha1Hash in val.get!(Cell [][string]);
+        Cell []* match = symbol.stringHash in val.get!(Cell [][string]);
 
         if (! match) {
             return alt;
@@ -1171,7 +1288,7 @@ class Cell {
 
         else if (type == Dict) {
             auto dict = val.get!(Cell [][string]);
-            dict [symbol.sha1Hash] = [symbol, value];
+            dict [symbol.stringHash] = [symbol, value];
             val = dict;
             return value;
         }
@@ -1194,7 +1311,7 @@ class Cell {
 
         else if (type == Dict) {
             auto dict = val.get!(Cell [][string]);
-            return dict [key.sha1Hash][1];
+            return dict [key.stringHash][1];
         }
         
         throw new InvalidCellType (
@@ -1693,6 +1810,9 @@ class Stacky {
     /// Dictionary stack.
     Cell [] dicts;
 
+    /// Contexts to lookup builtin procs.
+    Cell [string][] modules;
+    
     /// Instruction pointer of the operand stack.
     size_t ip = 0;
 
@@ -1717,6 +1837,9 @@ class Stacky {
     
     /// Returns the top of the operand stack.
     Cell top () {
+        if (operands.empty || ip == 0) {
+            throw new StackUnderflow ("Stacky.top: operands is empty.");
+        }
         return operands [0.. ip].top; 
     }
 
@@ -2026,7 +2149,7 @@ class Stacky {
                 Cell key = tokens [i ++]; 
                 Cell val = tokens [i];
                 
-                dict.val [key.sha1Hash] = [key, val];
+                dict.val [key.stringHash] = [key, val];
             }
             stacky.push (dict);
         };
@@ -2462,7 +2585,10 @@ class Stacky {
             }
 
             stacky.pop ();
-            array.val ~= operands [0.. ip];
+            array.val ~= stacky.operands [0 .. ip];
+            stacky.operands = []; 
+            stacky.ip        = 0;
+            stacky.push (array);
         };
         
         /// Load an array onto the stack.
@@ -2528,7 +2654,7 @@ class Stacky {
             stacky.pop ();
             stacky.pop ();
 
-            if (auto found = symb.sha1Hash in cell.val.get!(Cell [][string])) {
+            if (auto found = symb.stringHash in cell.val.get!(Cell [][string])) {
                 stacky.push (Cell.fromBool (true));
             
             } else {
@@ -2548,7 +2674,7 @@ class Stacky {
             stacky.pop ();
             stacky.pop ();
 
-            if (auto found = key.sha1Hash 
+            if (auto found = key.stringHash 
                            in stacky.dicts.back.val.get!(Cell [][string]))
             {
                 (*found) [1] = value;
@@ -2572,7 +2698,7 @@ class Stacky {
             stacky.pop ();
             stacky.pop ();
 
-            dict.val.get!(Cell [][string]).remove (value.sha1Hash);
+            dict.val.get!(Cell [][string]).remove (value.stringHash);
         };
 
         /// Return the dictionary with our stack where the key is defined.
@@ -2954,6 +3080,9 @@ class Stacky {
             pairs [1].funcName = pairs [0].val.get!string;
         }
 
+        // Track the type depth to remove the contextual symbol evaluation.
+        int typeDepth = 0;
+
         /// Type declaration analysis.
         procs [":["] = (Stacky stacky) {
 
@@ -2971,32 +3100,20 @@ class Stacky {
 
             "new symbolContexts: %s".writefln (stacky.symbolContexts);
 
-            stacky.push (cTypes);
-            stacky.eval (`
-                begin
-
-                /__typedecl_depth__ where 
-                    { drop 
-                      /__typedecl_depth__ __typedecl_depth__ 1 + def } 
-                    { /__typedecl_depth__ 1 def } 
-                if-else`);
+            stacky.addModule ("__builtin_parse_types__", cTypes);
+            typeDepth ++;
         };
         
         procs [":]"] = (Stacky stacky) {
-            stacky.eval (`
-                /__typedecl_depth__ __typedecl_depth__ 1 - def
-                __typedecl_depth__
-            `);
-            Cell level = stacky.top ();
-            stacky.pop ();
-            stacky.eval (`end`);
+            typeDepth --;
+            ":] level = %s".writefln (typeDepth);
 
-            ":] level = %s".writefln (level);
-
-            if (level.val.get!long == 0) {
+            if (typeDepth == 0) {
                 "removing symbolContexts for types".writeln;
                 stacky.symbolContexts.remove ("^:[A-Za-z0-9^:]+");
                 stacky.symbolContexts.remove ("^[A-Z].*");
+
+                stacky.removeModule ("__builtin_parse_types__");
             }
         };
 
@@ -3010,11 +3127,41 @@ class Stacky {
         return cProcs;
     }
 
+
+    void addModule (string name, Cell dict) {
+        modules ~= [name: dict];
+    }
+
+    void removeModule (string name) {
+        size_t index; 
+        
+        for (index = 0; index < modules.length; index ++) {
+            auto mod = modules [index];
+            
+            if (mod.keys [0] == name) {
+                if (index == 0) {
+                    modules = [];
+                    break;
+                }
+                modules = modules [0 .. index];
+                
+                if (index +1 < modules.length) {
+                    modules ~= modules [index +1 .. $];
+                }
+                break;
+            }
+        }
+    }
+
     /// Look up for a symbol in the dictionary stack.
     Cell lookup (Cell symbol) {
         Cell match;
-
-        foreach_reverse (dict; dicts) {
+        Cell [] modDicts; 
+        
+        foreach (dt; modules) {
+            modDicts ~= dt.values;
+        }
+        foreach_reverse (dict; chain (dicts, modDicts)) {
             match = dict.lookup (symbol);
             
             if (match !is null) {
@@ -3023,7 +3170,6 @@ class Stacky {
         }
         return match;
     }
-
 
     /** Look up for a symbol in the dictionary stack. The given string is 
       converted to a Cell Symbol.
@@ -3054,9 +3200,9 @@ class Stacky {
             try {
                 push (token);
 
-                "\n%s".writefln ('='.repeat (50));
-                operands.writeln;
-                execution.writeln;
+                //"\n%s".writefln ('='.repeat (50));
+                //operands.writeln;
+                //execution.writeln;
 
                 if (token.type == Integer 
                 ||  token.type == Floating
@@ -3077,8 +3223,8 @@ class Stacky {
                         return;
                     }
                     evalSymbol (token);
-                    "%s".writefln ('-'.repeat (50));
-                    operands.writeln;
+                    //"%s".writefln ('-'.repeat (50));
+                    //operands.writeln;
                     continue;
                 }
             } 
@@ -3151,16 +3297,16 @@ class Stacky {
         string symbol = op.val.get!(string);
 
         if (useContext) {
-            "evalSymbol: useContext = true".writeln;
+            //"evalSymbol: useContext = true".writeln;
             // Search for a context.
             auto keys = sort (symbolContexts.keys);
 
-            "keys are: %s".writefln (keys.array);
+            //"keys are: %s".writefln (keys.array);
             
             foreach (rex; keys) {
-                "symbol: %s".writefln (rex);
+                //"symbol: %s".writefln (rex);
                 if (symbol.matchFirst (regex (rex))) {
-                    "symbol: %s matches!!!".writefln (rex);
+                    //"symbol: %s matches!!!".writefln (rex);
                     auto dg = symbolContexts [rex];
 
                     // When matching call the delegate.
@@ -3225,8 +3371,14 @@ class Stacky {
 
             } else if (proc.kind == Procedure.Words) {
                 ++ callDepth; 
+                // create a new scope.
+                dicts ~= Cell.dictNew ();
+
                 eval (proc.code,
                       proc.name);
+                
+                // "destroy" the scope.
+                dicts.popBack ();
                 -- callDepth;
             }
         } catch (Exception e) {
@@ -3341,7 +3493,6 @@ void stackyTest () {
         clear-stack
 
         /all { 
-            [] begin 
             /proc   swap def 
             /array  swap def
             /status true def
@@ -3353,7 +3504,6 @@ void stackyTest () {
             } for-all
             
             status
-            end
         } def 
     `);
     stacky.eval (` ( 1 2 3 ) { 5 < } all `);
@@ -3364,7 +3514,6 @@ void stackyTest () {
         clear-stack
 
         /any { 
-            [] begin 
             /proc   swap def 
             /array  swap def
             
@@ -3374,8 +3523,6 @@ void stackyTest () {
                     return
                 } if 
             } for-all
-            
-            end
         } def 
 
         ( 1 2 3 ) { 5 < } any
@@ -3386,7 +3533,6 @@ void stackyTest () {
         clear-stack
 
         /map {
-            [] begin
             /proc   swap  def
             /source swap  def
             /target  ()   def 
@@ -3394,7 +3540,6 @@ void stackyTest () {
             source { proc target push } for-all
 
             target
-            end
         } def
     `);
     stacky.eval (` 
@@ -3407,7 +3552,6 @@ void stackyTest () {
         clear-stack
 
         /filter {
-            [] begin
             /proc   swap def
             /source swap def 
             /target  ()  def
@@ -3418,7 +3562,6 @@ void stackyTest () {
             } for-all
             
             target
-            end
         } def
 
         ( 1 9 3 10 4 16 ) { 5 > } filter
@@ -3494,6 +3637,25 @@ void stackyTest () {
         ) try-catch
     `);
 
+    // Check the vars in a procedure are scoped.
+    stacky.eval (`
+        clear-stack 
+
+        /toto 1 def 
+        toto 
+        
+        true { 
+            /toto 2 def 
+            toto 
+        } if 
+
+        toto
+
+        () a-store
+        ( 1 2 1 ) = 
+    `);
+    assert (stacky.operands.top == Cell.fromBool (true));
+
     "%s".writefln ('*'.repeat (30));
     stacky.operands.writeln;
     stacky.execution.dup.writeln;
@@ -3552,7 +3714,7 @@ void main () {
     grammarTest ();
     cellTest ();
     parseTest ();
-    //stackyTest ();
+    stackyTest ();
     testType ();
 
     repl ();
