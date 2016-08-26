@@ -1374,6 +1374,69 @@ class Cell {
     }
 }
 
+/// Cell from long for UFCS
+Cell   longCell (long   val) { return Cell.from (val); }
+
+/// Cell from double for UFCS
+Cell doubleCell (double val) { return Cell.from (val); }
+
+/// Cell from string for UFCS
+Cell stringCell (string val) { return Cell.from (val); }
+
+/// Symbol Cell from string for UFCS
+Cell symbolCell (string val) { return Cell.from!"symbol" (val); }
+
+/// Cell from bool for UFCS
+Cell   boolCell (bool   val) { return Cell.fromBool (val); }
+
+/// Cell from Exception for UFCS
+Cell exceptionCell (Exception val) { return Cell.from (val); }
+
+/// Cell from delegate for UFCS
+Cell procCell (Procedure.NativeType val) { return Cell.from (val); }
+
+/// Cell from an array for UFCS
+Cell arrayCell (string kind = "string", T) (T [] array) 
+    if (  !is (T [] : string)
+    && (   is (T    : long)
+       ||  is (T    : double)
+       ||  is (T    : string)
+       ||  is (T    : bool)
+       ||  is (T    : Exception)
+       ||  is (T    : void *)
+       ||  is (T    : Procedure.NativeType)))
+{
+    return Cell.from!(kind, T) (cast (T []) array); 
+}
+
+/// Cell from an associative array for UFCS
+Cell dictCell (string kind = "string", K, V) (V [K] dict)
+if ((   is (V : long)
+    ||  is (V : double)
+    ||  is (V : string)
+    ||  is (V : bool)
+    ||  is (V : Procedure)
+    ||  is (V : Procedure.NativeType)
+    ||  is (V : Exception)
+    ||  is (V : void *)
+    ||  is (V : long [])
+    ||  is (V : double [])
+    ||  is (V : string [])
+    ||  is (V : bool [])
+    ||  is (V : Exception [])
+    ||  is (V : void * [])
+    ||  is (V : Procedure [])
+    ||  is (V : Procedure.NativeType []))
+&&  (   is (K : long)
+    ||  is (K : double)
+    ||  is (K : string)
+    ||  is (K : bool)
+    ))
+{
+    return Cell.from (dict); 
+}
+
+
 void cellTest () {
     Cell anInt    = Cell.fromLong (0);
     assert (anInt.val == 0);
