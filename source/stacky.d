@@ -244,8 +244,8 @@ Procedure.NativeType [string] typeProcs;
 /// Returns true if the symbol respects the type variable format.
 bool isTypeVar (Cell cell) {
     return cell.type == Symbol 
-        && cell.val.get!(string).startsWith (":")
-        && cell.val.get!(string).length > 1
+        && cell.get!(string).startsWith (":")
+        && cell.get!(string).length > 1
         ;
 }
 
@@ -266,20 +266,20 @@ static this () {
 
 
     Integer.valToString = (Cell cell) {
-        return cell.val.get!(long).to!string ~ "i";
+        return cell.get!(long).to!string ~ "i";
     };
 
     Floating.valToString = (Cell cell) {
-        return cell.val.get!(double).to!string ~ "f";
+        return cell.get!(double).to!string ~ "f";
     };
 
     String.valToString = (Cell cell) {
-        return "\"" ~ cell.val.get!(string) ~ "\"";
+        return "\"" ~ cell.get!(string) ~ "\"";
     };
 
 
     Symbol.valToString = (Cell cell) {
-        auto symbol = cell.val.get!(string); 
+        auto symbol = cell.get!(string); 
 
         if (symbol.startsWith ("/")
         &&  symbol.length > 1) {
@@ -295,20 +295,20 @@ static this () {
     };
 
     Bool.valToString = (Cell cell) {
-        return cell.val.get!(bool) ? "true" : "false";
+        return cell.get!(bool) ? "true" : "false";
     };
 
     Array.valToString = (Cell cell) {
         return "(%s)".format (
-                    cell.val.get!(Cell []).map!(to!string)
-                            .array
-                            .join (", "));
+                    cell.get!(Cell []).map!(to!string)
+                        .array
+                        .join (", "));
     };
 
     Dict.valToString = (Cell cell) {
         string [] repr;
         
-        foreach (k, v; cell.val.get!(Cell [][string])) {
+        foreach (k, v; cell.get!(Cell [][string])) {
             repr ~= "%s: %s".format (v [0], v [1]);
         }
         
@@ -316,11 +316,11 @@ static this () {
     };
 
     Proc.valToString = (Cell cell) {
-        return cell.val.get!(Procedure).toString;
+        return cell.get!(Procedure).toString;
     };
 
     Except.valToString = (Cell cell) {
-        auto exception = cell.val.get!(Exception);
+        auto exception = cell.get!(Exception);
 
         return "Exception(%s, %s, %s)"
                 .format (exception.msg, 
@@ -333,7 +333,7 @@ static this () {
     };
             
     ExeCtrl.valToString = (Cell cell) {
-        return "ExeCtrl %s".format (cell.val.get!(string));
+        return "ExeCtrl %s".format (cell.get!string);
     };
 
     bool delegate (Cell, Object) numOpEqual = (Cell self, Object obj) {
@@ -373,8 +373,8 @@ static this () {
             return false;
         }
 
-        auto ownArray = self.val.get!(Cell []);
-        auto itsArray = cell.val.get!(Cell []);
+        auto ownArray = self.get!(Cell []);
+        auto itsArray = cell.get!(Cell []);
 
         if (ownArray.length != itsArray.length) {
             return false;
@@ -395,8 +395,8 @@ static this () {
             return false;
         }
         
-        auto ownDict = self.val.get!(Cell [][string]);
-        auto itsDict = cell.val.get!(Cell [][string]);
+        auto ownDict = self.get!(Cell [][string]);
+        auto itsDict = cell.get!(Cell [][string]);
 
         if (ownDict.keys.length != itsDict.keys.length) {
             return false;
@@ -418,7 +418,7 @@ static this () {
             return false;
         }
 
-        return self.val.get!T == cell.val.get!T;
+        return self.get!T == cell.get!T;
     }
 
     Proc.valOpEqual = (Cell self, Object obj) {
@@ -437,17 +437,17 @@ static this () {
             return -1;
         }
 
-        auto ownVal = self.val.get!long;
+        auto ownVal = self.get!long;
         
         if (cell.type == Integer) {
-            auto itsVal = cell.val.get!long;
+            auto itsVal = cell.get!long;
 
             return ownVal == itsVal
                  ? 0
                  : ownVal < itsVal ? -1 : 1;
         }
         if (cell.type == Floating) {
-            auto itsVal = cell.val.get!double;
+            auto itsVal = cell.get!double;
 
             return ownVal == itsVal
                  ? 0
@@ -463,17 +463,17 @@ static this () {
             return -1;
         }
         
-        auto ownVal = self.val.get!double;
+        auto ownVal = self.get!double;
         
         if (cell.type == Integer) {
-            auto itsVal = cell.val.get!long;
+            auto itsVal = cell.get!long;
 
             return ownVal == itsVal
                  ? 0
                  : ownVal < itsVal ? -1 : 1;
         }
         if (cell.type == Floating) {
-            auto itsVal = cell.val.get!double;
+            auto itsVal = cell.get!double;
 
             return ownVal == itsVal
                  ? 0
@@ -513,8 +513,8 @@ static this () {
             return self.type < cell.type ? -1 : 1;
         }
             
-        auto ownVal = self.val.get!(Cell []);
-        auto itsVal = cell.val.get!(Cell []);
+        auto ownVal = self.get!(Cell []);
+        auto itsVal = cell.get!(Cell []);
 
         if (ownVal.length != itsVal.length) {
             return ownVal.length < itsVal.length ? -1 : 1;
@@ -540,8 +540,8 @@ static this () {
         if (self.type != cell.type) {
             return self.type < cell.type ? -1 : 1;
         }
-        auto ownVal = self.val.get!(Cell [][string]);
-        auto itsVal = cell.val.get!(Cell [][string]);
+        auto ownVal = self.get!(Cell [][string]);
+        auto itsVal = cell.get!(Cell [][string]);
 
         if (ownVal.keys.length != itsVal.keys.length) {
             return ownVal.keys.length < itsVal.keys.length
@@ -574,8 +574,8 @@ static this () {
             return self.type < cell.type ? -1 : 1;
         }
 
-        auto ownVal = self.val.get!(Procedure);
-        auto itsVal = cell.val.get!(Procedure);
+        auto ownVal = self.get!(Procedure);
+        auto itsVal = cell.get!(Procedure);
 
         return ownVal.opCmp (itsVal);
     };
@@ -590,8 +590,8 @@ static this () {
         if (self.type != cell.type) {
             return self.type < cell.type ? -1 : 1;
         }
-        auto ownVal = self.val.get!(Exception);
-        auto itsVal = cell.val.get!(Exception);
+        auto ownVal = self.get!(Exception);
+        auto itsVal = cell.get!(Exception);
 
         return ownVal == itsVal
              ? 0
@@ -608,25 +608,25 @@ static this () {
     Field = new Type ("Field");
 
     Cons.valToString = (Cell cell) {
-        return "Cons <%s>".format (cell.val.get!(Cell [string]));
+        return "Cons <%s>".format (cell.get!(Cell [string]));
     };
     Prod.valToString = (Cell cell) {
-        return "Prod <%s>".format (cell.val.get!(Cell []));
+        return "Prod <%s>".format (cell.get!(Cell []));
     };
     Sum.valToString = (Cell cell) {
-        return "Sum <%s>".format (cell.val.get!(Cell []));
+        return "Sum <%s>".format (cell.get!(Cell []));
     };
     Appl.valToString = (Cell cell) {
-        return "Appl <%s>".format (cell.val.get!(Cell []));
+        return "Appl <%s>".format (cell.get!(Cell []));
     };
     TypeT.valToString = (Cell cell) {
-        return "Type <%s>".format (cell.val.get!(Cell []));
+        return "Type <%s>".format (cell.get!(Cell []));
     };
     Fun.valToString = (Cell cell) {
-        return "Fun <%s>".format (cell.val.get!(Cell []));
+        return "Fun <%s>".format (cell.get!(Cell []));
     };
     Field.valToString = (Cell cell) {
-        return "Field <%s>".format (cell.val.get!(Cell []));
+        return "Field <%s>".format (cell.get!(Cell []));
     };
 
 
@@ -643,7 +643,7 @@ static this () {
         stacky.pop ();
 
         if (a.type == Appl) {
-            auto array = a.val.get!(Cell []);
+            auto array = a.get!(Cell []);
             array ~= b;
             a.val  = array;
             stacky.push (a);
@@ -671,7 +671,7 @@ static this () {
         stacky.pop ();
 
         if (a.type == Prod) {
-            auto array = a.val.get!(Cell []);
+            auto array = a.get!(Cell []);
             array ~= b;
             a.val  = array;
             stacky.push (a);
@@ -1201,6 +1201,22 @@ class Cell {
         //return "<unknown>";
     }
 
+
+    /// Returns true if `this.val` contains a value.
+    bool hasValue () {
+        return val.hasValue ();
+    }
+
+    /// Get the value inside `this.val`.
+    inout inout(T) get (T) () {
+        return val.get!T;
+    }
+
+    /// Peek at the value.
+    inout inout(T*) peek (T) () {
+        return val.peek!T;
+    }
+    
     /// Equality operator.
     override bool opEquals (Object obj) {
         Cell cell = cast (Cell) obj;
@@ -1717,7 +1733,7 @@ void numberOp (void delegate (long, long) integerOp,
         floatingOp (a.floatValue, b.floatValue);
 
     } else { 
-        integerOp (a.val.get!(long), b.val.get!(long));
+        integerOp (a.get!(long), b.get!(long));
     }
 }
 
@@ -1745,10 +1761,10 @@ void numberFun (void delegate (long) integerOp,
     stacky.pop ();
     
     if (num.type == Floating) {
-        floatingOp (num.val.get!(double));
+        floatingOp (num.get!(double));
 
     } else { 
-        integerOp (num.val.get!(long));
+        integerOp (num.get!(long));
     }
 }
 
@@ -1938,7 +1954,7 @@ class Stacky {
                         .format (n.toString));
             }
 
-            Cell nTh = stacky.operands.index (n.val.get!(long).to!size_t);
+            Cell nTh = stacky.operands.index (n.get!(long).to!size_t);
             stacky.operands ~= nTh;
         };
 
@@ -1981,12 +1997,12 @@ class Stacky {
                         .format (n.toString));
             }
             
-            if (stacky.operands.length < n.val.get!(long)) {
+            if (stacky.operands.length < n.get!(long)) {
                 throw new StackUnderflow ("copy");
             }
             
             Cell [] items 
-                = stacky.operands [stacky.ip - n.val.get!(long) .. stacky.ip];
+                = stacky.operands [stacky.ip - n.get!(long) .. stacky.ip];
 
             foreach (item; items) {
                 stacky.push (item);
@@ -2007,15 +2023,15 @@ class Stacky {
                         "rolln: expected an integer got: %s"
                         .format (n.toString));
             }
-            if (stacky.operands [0 .. stacky.ip].length < n.val.get!(long)) {
+            if (stacky.operands [0 .. stacky.ip].length < n.get!(long)) {
                 throw new StackUnderflow ("rolln");
             }
 
-            Cell bottom = stacky.operands.index (n.val.get!(long)); 
+            Cell bottom = stacky.operands.index (n.get!(long)); 
             Cell top    = stacky.operands.top;
 
-            stacky.operands [stacky.ip - 1]             = bottom;
-            stacky.operands [stacky.ip - 1 - n.val.get!long] = top;
+            stacky.operands [stacky.ip - 1]              = bottom;
+            stacky.operands [stacky.ip - 1 - n.get!long] = top;
         };
 
         /// Put a mark on the stack.
@@ -2204,18 +2220,18 @@ class Stacky {
             
             Cell key;
 
-            if (name.val.get!(string).startsWith ("/")
-            && !name.val.get!(string).startsWith ("//")
-            &&  name.val.get!(string).length > 1) 
+            if (name.get!(string).startsWith ("/")
+            && !name.get!(string).startsWith ("//")
+            &&  name.get!(string).length > 1) 
             {
-                key = Cell.fromSymbol (name.val.get!(string) [1..$]);
+                key = Cell.fromSymbol (name.get!(string) [1..$]);
             
             } else {
                 key = name;
             }
 
             if (obj.type == Proc) {
-                obj.val.get!(Procedure).name = key.val.get!string;
+                obj.get!(Procedure).name = key.get!string;
             }
 
             stacky.dicts.top [key] = obj;
@@ -2234,7 +2250,7 @@ class Stacky {
                     .format (obj));
             }
             stacky.pop ();
-            stacky.push (Cell.fromBool (! obj.val.get!(bool)));
+            stacky.push (Cell.fromBool (! obj.get!(bool)));
         };
 
         /// Comparison operators.
@@ -2312,11 +2328,11 @@ class Stacky {
 
             if (num.type == Integer) {
                 stacky.pop ();
-                stacky.push (Cell.from (- num.val.get!(long)));
+                stacky.push (Cell.from (- num.get!(long)));
 
             } else if (num.type == Floating) {
                 stacky.pop ();
-                stacky.push (Cell.from (- num.val.get!(double)));
+                stacky.push (Cell.from (- num.get!(double)));
 
             } else {
                 throw new InvalidCellType (
@@ -2461,24 +2477,24 @@ class Stacky {
         /// Boolean logic.
         procs ["and"] = (Stacky stacky) {
             boolBinOp!((a, b) {
-                    stacky.push (Cell.fromBool (a.val.get!bool && b.val.get!bool));
+                    stacky.push (Cell.fromBool (a.get!bool && b.get!bool));
             }) (stacky);
         };
         procs ["or"] = (Stacky stacky) {
             boolBinOp!((a, b) {
-                    stacky.push (Cell.fromBool (a.val.get!bool || b.val.get!bool));
+                    stacky.push (Cell.fromBool (a.get!bool || b.get!bool));
             }) (stacky);
         };
         procs ["xor"] = (Stacky stacky) {
             boolBinOp!((a, b) {
-                    stacky.push (Cell.fromBool (a.val.get!bool ^ b.val.get!bool));
+                    stacky.push (Cell.fromBool (a.get!bool ^ b.get!bool));
             }) (stacky);
         };
 
 
         /// Get the length of an Array or Dict.
         procs ["length"] = (Stacky stacky) {
-            if (operands.length < 1) {
+            if (stacky.operands.length < 1) {
                 throw new StackUnderflow ("length: not enough arguments.");
             }
 
@@ -2486,11 +2502,11 @@ class Stacky {
 
             if (cell.type == Array) {
                 stacky.pop ();
-                stacky.push (Cell.from (cell.val.get!(Cell []).length));
+                stacky.push (Cell.from (cell.get!(Cell []).length));
             }
             else if (cell.type == Dict) {
                 stacky.pop ();
-                stacky.push (Cell.from (cell.val.get!(Cell [][string]).length));
+                stacky.push (Cell.from (cell.get!(Cell [][string]).length));
             }
             else {
                 throw new InvalidCellType ("length: object has no length.");
@@ -2521,7 +2537,7 @@ class Stacky {
                 stacky.pop ();
                 stacky.push (
                     Cell.from (
-                        "" ~ cell.val.get!string [index.val.get!long]));
+                        "" ~ cell.get!string [index.get!long]));
             }
             else {
                 throw new InvalidCellType ("get: object has no length.");
@@ -2658,7 +2674,7 @@ class Stacky {
             stacky.pop ();
             stacky.pop ();
 
-            if (auto found = symb.stringHash in cell.val.get!(Cell [][string])) {
+            if (auto found = symb.stringHash in cell.get!(Cell [][string])) {
                 stacky.push (Cell.fromBool (true));
             
             } else {
@@ -2679,7 +2695,7 @@ class Stacky {
             stacky.pop ();
 
             if (auto found = key.stringHash 
-                           in stacky.dicts.back.val.get!(Cell [][string]))
+                           in stacky.dicts.back.get!(Cell [][string]))
             {
                 (*found) [1] = value;
             }
@@ -2769,13 +2785,13 @@ class Stacky {
             stacky.pop ();
             
             if (cont.type == Array) {
-                foreach (cell; cont.val.get!(Cell [])) {
+                foreach (cell; cont.get!(Cell [])) {
                     stacky.push (cell);
                     stacky.evalProc (proc);
                 }
             }
             else if (cont.type == Dict) {
-                foreach (sha1, pair; cont.val.get!(Cell [][string])) {
+                foreach (sha1, pair; cont.get!(Cell [][string])) {
                     stacky.push (pair [0]); 
                     stacky.push (pair [1]);
                     stacky.evalProc (proc);
@@ -2843,7 +2859,7 @@ class Stacky {
             stacky.pop ();
             stacky.pop ();
 
-            if (cond.val.get!bool) {
+            if (cond.get!bool) {
                 stacky.evalProc (procIf);
             } else {
                 stacky.evalProc (procElse);
@@ -2890,17 +2906,17 @@ class Stacky {
             stacky.pop ();
 
             if (start <= limit) {
-                for (size_t i = start.val.get!long
-                    ; i <= limit.val.get!long
-                    ; i += incr.val.get!long) 
+                for (size_t i = start.get!long
+                    ; i <= limit.get!long
+                    ; i += incr.get!long) 
                 {
                     stacky.push (Cell.from (i));
                     stacky.evalProc (proc);
                 }
             } else {
-                for (size_t i = start.val.get!long
-                    ; i > limit.val.get!long
-                    ; i -= incr.val.get!long) 
+                for (size_t i = start.get!long
+                    ; i > limit.get!long
+                    ; i -= incr.get!long) 
                 {
                     stacky.push (Cell.from (i));
                     stacky.evalProc (proc);
@@ -2963,7 +2979,7 @@ class Stacky {
                     "cond: not an Array: %s.".format (conds));
             }
 
-            long length = conds.val.get!(Cell []).length;
+            long length = conds.get!(Cell []).length;
 
             if (length % 2 != 0) {
                 throw new InvalidCellType (
@@ -2972,7 +2988,7 @@ class Stacky {
             }
             
             for (size_t i = 0; i < length; ++ i) {
-                Cell action  = conds.val.get!(Cell []) [i];
+                Cell action  = conds.get!(Cell []) [i];
 
                 if (action.type != Proc
                 &&  (action.type == Symbol && action.val != "/else")) {
@@ -2983,8 +2999,8 @@ class Stacky {
             }
 
             for (size_t i = 0; i < length; ++ i) {
-                Cell test   = conds.val.get!(Cell []) [i]; 
-                Cell action = conds.val.get!(Cell []) [++ i];
+                Cell test   = conds.get!(Cell []) [i]; 
+                Cell action = conds.get!(Cell []) [++ i];
                 
                 if (test.type == Symbol && test.val == "/else") {
                     stacky.evalProc (action);
@@ -3021,7 +3037,7 @@ class Stacky {
                     "try-catch: 2nd arg is not an Array: %s.".format (recover));
             }
 
-            if (recover.val.get!(Cell []).length % 2 != 0) {
+            if (recover.get!(Cell []).length % 2 != 0) {
                 throw new InvalidCellType (
                     "try-catch, 2nd arg: array length is not a multiple of 2: %s."
                     .format (recover));
@@ -3030,9 +3046,9 @@ class Stacky {
             stacky.pop ();
             stacky.pop ();
             
-            for (size_t i = 0; i < recover.val.get!(Cell []).length; i += 2) {
-                Cell excName  = recover.val.get!(Cell []) [i];
-                Cell action   = recover.val.get!(Cell []) [i +1];
+            for (size_t i = 0; i < recover.get!(Cell []).length; i += 2) {
+                Cell excName  = recover.get!(Cell []) [i];
+                Cell action   = recover.get!(Cell []) [i +1];
 
                 if (excName.type != Symbol) {
                     throw new InvalidCellType (
@@ -3050,13 +3066,13 @@ class Stacky {
             Cell handler = Cell.from ((Stacky stacky) {
                 Cell exc       = stacky.top;
                 auto coreRe    = regex (`^(core.Exception|object|stacky)\.`);
-                auto eName     = typeid (exc.val.get!Exception)
+                auto eName     = typeid (exc.get!Exception)
                                  .to!string
                                  .replaceFirst (coreRe, "");
 
-                for (size_t i = 0; i < recover.val.get!(Cell []).length; i += 2) {
-                    Cell excName  = recover.val.get!(Cell []) [i];
-                    Cell action   = recover.val.get!(Cell []) [i +1];
+                for (size_t i = 0; i < recover.get!(Cell []).length; i += 2) {
+                    Cell excName  = recover.get!(Cell []) [i];
+                    Cell action   = recover.get!(Cell []) [i +1];
 
                     if (eName != excName.toString
                     && excName.val != "/Exception") 
@@ -3117,8 +3133,8 @@ class Stacky {
         Cell cProcs 
             = Cell.from!("symbol", string, Procedure.NativeType) (procs);
 
-        foreach (sha1, pairs; cProcs.val.get!(Cell [][string])) {
-            pairs [1].funcName = pairs [0].val.get!string;
+        foreach (sha1, pairs; cProcs.get!(Cell [][string])) {
+            pairs [1].funcName = pairs [0].get!string;
         }
 
         return cProcs;
@@ -3261,7 +3277,7 @@ class Stacky {
         }
 
         if (traces != Cell.fromBool (false)) {
-            foreach (Cell trace; traces.val.get!(Cell [])) {
+            foreach (Cell trace; traces.get!(Cell [])) {
                 Cell nope = sym ("??");
                 
                 // Get the values. The maybe empty.
@@ -3272,9 +3288,9 @@ class Stacky {
 
                 // Display the values, replace empty vals by ??.
                 msgs ~= "  in %s: %s: %s\n    %s".format ( 
-                        or (file.val.get!(string), "??"), 
-                        or (func.val.get!(string), "??"), 
-                        or (line.val.get!(string), "??"), 
+                        or (file.get!(string), "??"), 
+                        or (func.get!(string), "??"), 
+                        or (line.get!(string), "??"), 
                         token); 
                         
             }
@@ -3291,7 +3307,7 @@ class Stacky {
 
     /// Evaluate a symbol.
     void evalSymbol (Cell op, bool useContext = true) {
-        string symbol = op.val.get!(string);
+        string symbol = op.get!(string);
 
         if (useContext) {
             //"evalSymbol: useContext = true".writeln;
@@ -3339,7 +3355,7 @@ class Stacky {
         }
 
         if (immediate) {
-            "eval symbol: %s immediate : %s".writefln (op.val.get!string, match);
+            "eval symbol: %s immediate : %s".writefln (op.get!string, match);
             execution.insert ([match]);
             return;
         }
@@ -3360,7 +3376,7 @@ class Stacky {
         }
 
         ExecutionStack backup = execution.dup;
-        Procedure      proc   = cell.val.get!(Procedure);
+        Procedure      proc   = cell.get!(Procedure);
 
         try {
             if (proc.kind == Procedure.Native) {
@@ -3479,12 +3495,12 @@ void stackyTest () {
 
     stacky.eval (`clear-stack { dup dup }`);
     assert (stacky.top.type == Proc);
-    assert (stacky.top.val.get!(Procedure).code [0 .. 2]
+    assert (stacky.top.get!(Procedure).code [0 .. 2]
             == map!(Cell.fromSymbol) (["dup", "dup"]).array);
 
-    assert (stacky.dicts.top.val.get!(Cell [][string]).keys.empty);
+    assert (stacky.dicts.top.get!(Cell [][string]).keys.empty);
     stacky.eval (`clear-stack /2dup { dup dup } def print-stack`);
-    assert (! stacky.dicts.top.val.get!(Cell [][string]).keys.empty);
+    assert (! stacky.dicts.top.get!(Cell [][string]).keys.empty);
 
     stacky.eval (`clear-stack 1 2 2dup`);
     assert (stacky.operands
