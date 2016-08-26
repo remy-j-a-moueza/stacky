@@ -2599,7 +2599,7 @@ class Stacky {
 
         /// Get the value at the given index in an Array or Dict.
         procs ["get"] = (Stacky stacky) {
-            if (operands.length < 2) {
+            if (stacky.operands.length < 2) {
                 throw new StackUnderflow ("get: not enough arguments.");
             }
 
@@ -2630,7 +2630,7 @@ class Stacky {
 
         /// Put a value at an index in an Array or Dict.
         procs ["put"] = (Stacky stacky) {
-            if (operands.length < 3) {
+            if (stacky.operands.length < 3) {
                 throw new StackUnderflow ("put: not enough arguments.");
             }
 
@@ -2652,7 +2652,7 @@ class Stacky {
 
         /// Append a value to the end of an Array.
         procs ["push"] = (Stacky stacky) {
-            if (operands.length < 2) {
+            if (stacky.operands.length < 2) {
                 throw new StackUnderflow (
                     "push: not enough arguments: needs 2.");
             }
@@ -2674,7 +2674,7 @@ class Stacky {
 
         /// Store the stack inside an array.
         procs ["a-store"] = (Stacky stacky) {
-            if (operands.length < 1) {
+            if (stacky.operands.length < 1) {
                 throw new StackUnderflow ("a-store: not enough arguments.");
             }
             
@@ -2697,7 +2697,7 @@ class Stacky {
         
         /// Load an array onto the stack.
         procs ["a-load"] = (Stacky stacky) {
-            if (operands.length < 1) {
+            if (stacky.operands.length < 1) {
                 throw new StackUnderflow ("a-store: not enough arguments.");
             }
             
@@ -2713,14 +2713,14 @@ class Stacky {
 
             stacky.pop ();
 
-            foreach (cell; array.val.get!(Cell [])) {
+            foreach (cell; array.get!(Cell [])) {
                 stacky.push (cell);
             }
         };
 
         /// Push a dictionary on the dictionary stack.
         procs ["begin"] = (Stacky stacky) {
-            if (operands.length < 1) {
+            if (stacky.operands.length < 1) {
                 throw new StackUnderflow (
                     "begin: not enough arguments; needs one.");
             }
@@ -2743,7 +2743,7 @@ class Stacky {
 
         /// True if a key is contained in a dictionary.
         procs ["known"] = (Stacky stacky) {
-            if (operands.length < 2) {
+            if (stacky.operands.length < 2) {
                 throw new StackUnderflow ("known: not enough arguments.");
             }
             
@@ -2768,7 +2768,7 @@ class Stacky {
         
         /// Update the topmost dict with a new value for the given key.
         procs ["store"] = (Stacky stacky) {
-            if (operands.length < 2) {
+            if (stacky.operands.length < 2) {
                 throw new StackUnderflow ("store: not enough arguments.");
             }
             
@@ -2787,7 +2787,7 @@ class Stacky {
 
         /// Remove a key from a dictionary.
         procs ["undef"] = (Stacky stacky) {
-            if (operands.length < 2) {
+            if (stacky.operands.length < 2) {
                 throw new StackUnderflow ("undef: not enough arguments.");
             }
             
@@ -2802,12 +2802,12 @@ class Stacky {
             stacky.pop ();
             stacky.pop ();
 
-            dict.val.get!(Cell [][string]).remove (value.stringHash);
+            dict.get!(Cell [][string]).remove (value.stringHash);
         };
 
         /// Return the dictionary with our stack where the key is defined.
         procs ["where"] = (Stacky stacky) {
-            if (operands.length < 1) {
+            if (stacky.operands.length < 1) {
                 throw new StackUnderflow ("where: not enough arguments.");
             }
             
@@ -2845,7 +2845,7 @@ class Stacky {
         /// Apply a procedure to all the element of an array, dict or string.
         /// For dict, pushes key and value onto the stack for the procedure.
         procs ["for-all"] = (Stacky stacky) {
-            if (operands.length < 2) {
+            if (stacky.operands.length < 2) {
                 throw new StackUnderflow ("for-all: not enough arguments.");
             }
             
@@ -2892,7 +2892,7 @@ class Stacky {
 
         /// Single conditional.
         procs ["if"] = (Stacky stacky) {
-            if (operands.length < 2) {
+            if (stacky.operands.length < 2) {
                 throw new StackUnderflow ("if: not enough arguments.");
             }
 
@@ -2911,14 +2911,14 @@ class Stacky {
             stacky.pop ();
             stacky.pop ();
 
-            if (cond.val.get!bool) {
+            if (cond.get!bool) {
                 stacky.evalProc (proc);
             }
         };
         
         /// Conditional with alternative.
         procs ["ifelse"] = (Stacky stacky) {
-            if (operands.length < 3) {
+            if (stacky.operands.length < 3) {
                 throw new StackUnderflow ("if: not enough arguments.");
             }
 
@@ -2958,7 +2958,7 @@ class Stacky {
         };
 
         procs ["for"] = (Stacky stacky) {
-            if (operands.length < 4) {
+            if (stacky.operands.length < 4) {
                 throw new StackUnderflow ("for: not enough arguments.");
             }
 
@@ -3011,7 +3011,7 @@ class Stacky {
         };
         
         procs ["repeat"] = (Stacky stacky) {
-            if (operands.length < 2) {
+            if (stacky.operands.length < 2) {
                 throw new StackUnderflow ("repeat: not enough arguments.");
             }
 
@@ -3033,7 +3033,7 @@ class Stacky {
         };
         
         procs ["loop"] = (Stacky stacky) {
-            if (operands.length < 1) {
+            if (stacky.operands.length < 1) {
                 throw new StackUnderflow ("loop: not enough arguments.");
             }
 
@@ -3051,7 +3051,7 @@ class Stacky {
         };
 
         procs ["cond"] = (Stacky stacky) {
-            if (operands.length < 1) {
+            if (stacky.operands.length < 1) {
                 throw new StackUnderflow ("cond: not enough arguments.");
             }
 
@@ -3103,7 +3103,7 @@ class Stacky {
         };
 
         procs ["try-catch"] = (Stacky stacky) {
-            if (operands.length < 2) {
+            if (stacky.operands.length < 2) {
                 throw new StackUnderflow (
                     "try-catch: not enough arguments (needs 2).");
             }
