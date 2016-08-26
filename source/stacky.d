@@ -156,6 +156,9 @@ class Type {
     /// The type name.
     string name;
 
+    /// Index for anonymous types.
+    protected static size_t index = 0;
+
     /// Is this a stacky native type (no constructors)?
     bool native;
 
@@ -178,6 +181,10 @@ class Type {
                 "Cons": [ Type.var ("a"), Type.self (Type.var ("a"))] 
             ];
         */
+
+    static unnamed () {
+        return new Type ("unnamed-type-#%d".format (index ++));
+    }
 
     /// A delegate to display the values of this type.
     string delegate (Cell) valToString = null; 
@@ -1357,7 +1364,7 @@ class Cell {
         throw new InvalidCellType (
             "Expected an Array or a Dict.");
     }
-    
+
     /// Convert to floating as needed.
     double floatValue () {
         if (type != Integer && type != Floating) {
@@ -1932,6 +1939,9 @@ class Stacky {
 
     /// Stacky known types.
     Type [][string] types;
+
+    /// Stack of types when building a new type
+    Type [] typeStack;
 
     /** A delegate to evaluate symbols contextually based on their prefixes.
       The index is a regular expression to match.
@@ -3199,6 +3209,9 @@ class Stacky {
         Cell cTypes 
             = Cell.from!("symbol", string, Procedure.NativeType) 
                         (typeProcs);
+        
+        /// Add a type stack array.
+        cTypes ["type-stack".symbolCell] = Cell.arrayNew ();
 
         foreach (sha1, pairs; cTypes.get!(Cell [][string])) {
             pairs [1].funcName = pairs [0].get!string;
@@ -3207,9 +3220,9 @@ class Stacky {
         // Track the type depth to remove the contextual symbol evaluation.
         int typeDepth = 0;
 
-        /// Type declaration analysis.
-        procs [":["] = (Stacky stacky) {
 
+        /// Common initialization for type declaration.
+        void initTypeDef (Stacky stacky) {
             stacky.symbolContexts ["^:[A-Za-z0-9^:]+"] 
                 = (Stacky stacky, Cell sym) {
                     return true;
@@ -3221,10 +3234,53 @@ class Stacky {
 
             stacky.addModule ("__builtin_parse_types__", cTypes);
             typeDepth ++;
+        }
+
+        auto TypeDecl = new Type ("TypeDecl");
+        TypeDecl.valToString = (Cell cell) {
+            auto type = cell.get!Type;
+            return type.name;
+        };
+
+        /// Unnamed type declaration.
+        procs [":["] = (Stacky stacky) {
+            stacky.typeStack ~= Type.unnamed ();
+            ":[ type-stack: ".writeln (stacky.typeStack);
+
+            initTypeDef (stacky);
+        };
+
+        /// Type declaration analysis.
+        procs ["def:["] = (Stacky stacky) {
+
+            if (stacky.operands.length < 1) {
+                throw new StackUnderflow (
+                    "`def:[`: expected a symbol before type declaration." );
+            }
+
+            Cell name = stacky.top ();
+
+            if (name.type != Symbol) {
+                throw new InvalidCellType (
+                    "`def:[`: expected a symbol before type declaration. "
+                    ~ "got %s instead".format (name.type));
+            }
+            
+            stacky.typeStack ~= new Type (name.get!string);
+            initTypeDef (stacky);
+
         };
         
         procs [":]"] = (Stacky stacky) {
             typeDepth --;
+
+            ":] type-stack: ".writeln (stacky.typeStack);
+
+            if (! stacky.typeStack.empty) {
+                //stacky.push (new Cell (TypeDecl, stacky.typeStack.back)); 
+                stacky.typeStack.popBack ();
+            }
+            
 
             if (typeDepth == 0) {
                 stacky.symbolContexts.remove ("^:[A-Za-z0-9^:]+");
