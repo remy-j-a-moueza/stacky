@@ -2177,6 +2177,22 @@ class Stacky {
             vals.join (" ").writeln;
         };
 
+        procs ["print"] = (Stacky stacky) {
+            if (stacky.operands.length < 1) {
+                throw new StackUnderflow ("print: no argument on stack");
+            }
+            stacky.top.toString.write ();
+        };
+        
+        procs ["println"] = (Stacky stacky) {
+            if (stacky.operands.length < 1) {
+                throw new StackUnderflow ("print: no argument on stack");
+            }
+            stacky.top.toString.writeln ();
+        };
+        
+        procs ["print-ln"] = procs ["println"];
+
         /// Leave an Array opening mark.
         procs ["("] = (Stacky stacky) {
             stacky.push (Cell.from!"symbol" ("("));
