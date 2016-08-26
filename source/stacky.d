@@ -35,8 +35,29 @@ StackyLang:
 
     Bool       < "true" / "false"
 
-    String     <- :'\"' ~((!'\"') .)* :'\"'
+    String     <- :'\"' ~Char* :'\"'
     RawString  <- :'r\"' ~((!'\"') .)* :'\"'
+
+    Char       <- :backslash Escape / !doublequote .
+    Escape     <- (                
+                  / quote        
+                  / doublequote  
+                  / backslash    
+                  / [abfnrtv]    
+                  ) { (ParseTree p) { 
+                      auto c = p.matches [0];
+                      
+                      if (c == "a") { p.matches = ["\a"]; }
+                      if (c == "b") { p.matches = ["\b"]; }
+                      if (c == "f") { p.matches = ["\f"]; }
+                      if (c == "n") { p.matches = ["\n"]; }
+                      if (c == "r") { p.matches = ["\r"]; }
+                      if (c == "t") { p.matches = ["\t"]; }
+                      if (c == "v") { p.matches = ["\v"]; }
+
+                      return p;
+                  }}  
+
     
     # Numbers.
     Real       <~ Floating ( ('e' / 'E' ) Integer )?
