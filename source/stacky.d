@@ -2398,7 +2398,7 @@ class Stacky {
                     stacky.push (Cell.from (a % b));
                 }, 
                 (double a, double b) {
-                    stacky.push (Cell.from (a/ b));
+                    stacky.push (Cell.from (floor (a/ b)));
                     stacky.push (Cell.from (fmod (a, b).to!double));
 
                 }) (stacky);
@@ -2664,6 +2664,7 @@ class Stacky {
                 stacky.pop ();
                 stacky.pop ();
                 array.val ~= value;
+                stacky.push (array);
             }
             else {
                 throw new InvalidCellType (
@@ -3027,7 +3028,10 @@ class Stacky {
                     "repeat, times: not an Integer: %s.".format (times));
             }
 
-            foreach (n; 0 .. times.val.get!long) {
+            stacky.pop ();
+            stacky.pop ();
+
+            foreach (n; 0 .. times.get!long) {
                 stacky.evalProc (proc);
             }
         };
@@ -3180,8 +3184,8 @@ class Stacky {
             = Cell.from!("symbol", string, Procedure.NativeType) 
                         (typeProcs);
 
-        foreach (sha1, pairs; cTypes.val.get!(Cell [][string])) {
-            pairs [1].funcName = pairs [0].val.get!string;
+        foreach (sha1, pairs; cTypes.get!(Cell [][string])) {
+            pairs [1].funcName = pairs [0].get!string;
         }
 
         // Track the type depth to remove the contextual symbol evaluation.
