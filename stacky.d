@@ -16,6 +16,27 @@ import core.exception;
 import pegged.grammar;
 import pegged.tester.grammartester;
 
+/** Check that a match is not in a reserved symbol/keyword list **/
+ParseTree checkNotIn (string [] reserved) (ParseTree p) {
+    if (! p.successful || ! p.matches)
+      return p;
+
+    bool   status = true;
+    string str    = ""; 
+    foreach (m; p.matches) str ~= m; 
+
+    foreach (word; reserved) {
+        if (str == word) {
+            status = false; 
+            break;
+        }
+    }
+    p.successful = status;
+    return p;
+}
+
+/** Check that a variable is not a reserved word. */
+alias checkSymbol = checkNotIn!([ "%(", "%)", "%" ]);
 
 mixin (grammar (`
 StackyLang:
@@ -29,7 +50,7 @@ StackyLang:
                / Bool
                / Directive
                / Eol
-               / Symbol
+               / Symbol { checkSymbol }
     
     Symbol     <-  ~((! [ \t\n\r]) .)+
 
@@ -2067,6 +2088,40 @@ class Stacky {
         };
 
         procs ["exch"] = procs ["swap"];
+        
+        /// Swaps the top with an element n deep in the the stack.
+        procs ["swapn"] = (Stacky stacky) {
+            if (stacky.operands.length < 2) {
+                throw new StackUnderflow ("swap");
+            }
+            Cell n      = stacky.top;
+
+            if (n.type != Integer) {
+                throw new InvalidCellType (
+                        "swapn: expected an integer got: %s"
+                        .format (n.toString));
+            }
+            if (n.get!long > stacky.operands.length) {
+                throw new StackUnderflow (
+                        "swapn: not enough element on the stack for %s"
+                        .format (n.toString));
+            }
+            stacky.pop ();
+
+            Cell [] cells = []; 
+            Cell top      = stacky.top;
+            stacky.pop ();
+
+            foreach (time; 0 .. n.get!long) {
+                cells ~= stacky.top; 
+                stacky.pop ();
+            }
+            stacky.push (top);
+            
+            foreach_reverse (cell; cells) {
+                stacky.push (cell);
+            }
+        };
 
         /// Duplicate the top of the stack.
         procs ["dup"] = (Stacky stacky) {
@@ -2121,8 +2176,8 @@ class Stacky {
                 throw new StackUnderflow ("rolln");
             }
 
-            Cell bottom = stacky.operands.index (n.get!(long)); 
             Cell top    = stacky.operands.top;
+            Cell bottom = stacky.operands [stacky.ip - 1 - n.get!long];
 
             stacky.operands [stacky.ip - 1]              = bottom;
             stacky.operands [stacky.ip - 1 - n.get!long] = top;
@@ -2734,7 +2789,7 @@ class Stacky {
                 throw new InvalidCellType ("a-store: not an Array.");
             }
 
-            if (ip -1 == 0) {
+            if (ip == 0) {
                 return;
             }
 
